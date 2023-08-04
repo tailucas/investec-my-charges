@@ -2,6 +2,7 @@
 import logging.handlers
 
 import asyncio
+import boto3
 import builtins
 
 # setup builtins used by pylib init
@@ -17,6 +18,8 @@ class CredsConfig:
     influxdb_org: f'opitem:"InfluxDB" opfield:{influx_creds_section}.org' = None # type: ignore
     influxdb_token: f'opitem:"InfluxDB" opfield:{APP_NAME}.token' = None # type: ignore
     influxdb_url: f'opitem:"InfluxDB" opfield:{influx_creds_section}.url' = None # type: ignore
+    mongodb_user: f'opitem:"MongoDB" opfield:{APP_NAME}.username' = None # type: ignore
+    mongodb_password: f'opitem:"MongoDB" opfield:{APP_NAME}.password' = None # type: ignore
 
 
 # instantiate class
@@ -30,6 +33,8 @@ from pylib import (
 
 from pylib.threads import bye, die
 from pylib.zmq import zmq_term
+
+from pymongo import MongoClient
 
 from telegram.ext import (
     Application,
@@ -58,8 +63,36 @@ def main():
     log.setLevel(logging.INFO)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    md_conn = None
     try:
+        # Connecting to MongoDB cluster
+        mongodb_db_name = app_config.get('mongodb', 'db_name')
+        mongodb_collection_name = app_config.get('mongodb', 'cluster_name')
+        log.debug(f'Opening MongoDB connection {creds.mongodb_user}@{mongodb_db_name}::{mongodb_collection_name}...')
+        mongodb_connection_string = app_config.get('mongodb', 'conn_string')
+        db_url = mongodb_connection_string.replace('__USER__', creds.mongodb_user).replace('__PASSWORD__', creds.mongodb_password)
+        md_conn = MongoClient(db_url)
+        md_db = md_conn[mongodb_db_name]
+        md_collection = md_db[mongodb_collection_name]
+        query = {}
+        projection = {}
+        sort = []
+        cursor = md_collection.find(query, projection=projection, sort=sort)
+        for doc in cursor:
+            log.info(f'{doc!s}')
+
+        sqs_queue_name = app_config.get('aws', 'sqs_queue_name')
+        log.info(f'Creating SQS client for queue {sqs_queue_name}')
+        sqs = boto3.resource('sqs')
+        sqs_queue = sqs.get_queue_by_name(QueueName=sqs_queue_name)
+        for sqs_message in sqs_queue.receive_messages(WaitTimeSeconds=20):
+            # forward for further processing
+            message_body = sqs_message.body
+            log.info(f'SQS message says {message_body}')
+
+        log.info('Starting local SQLite database...')
         loop.run_until_complete(db_startup())
+        log.info('Starting Telegram Bot...')
         """Start the bot."""
         # Create the Application and pass it your bot's token.
         application = Application.builder().token(creds.telegram_bot_api_token).build()
@@ -79,6 +112,8 @@ def main():
         log.info('Shutting down...')
     finally:
         die()
+        if md_conn:
+            md_conn.close()
         zmq_term()
         loop.close()
     bye()
