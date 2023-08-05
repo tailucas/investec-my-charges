@@ -29,7 +29,7 @@ from telegram.ext import (
 )
 
 # Reduce Sentry noise
-ignore_logger('telegram.ext._updater')
+ignore_logger('telegram.ext.Updater')
 
 ACTION_NONE = 0
 
