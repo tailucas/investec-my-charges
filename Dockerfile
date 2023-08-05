@@ -15,6 +15,8 @@ RUN rm -f ./config/cron/base_job
 COPY config/cron/backup_db ./config/cron/
 # apply override
 RUN /opt/app/app_setup.sh
+# tools
+COPY investec-api-python/ ./investec-api-python/
 # switch to user
 USER app
 # override configuration

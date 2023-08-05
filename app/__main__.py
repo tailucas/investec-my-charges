@@ -2,7 +2,6 @@
 import logging.handlers
 
 import asyncio
-import boto3
 import builtins
 
 # setup builtins used by pylib init
@@ -18,8 +17,10 @@ class CredsConfig:
     influxdb_org: f'opitem:"InfluxDB" opfield:{influx_creds_section}.org' = None # type: ignore
     influxdb_token: f'opitem:"InfluxDB" opfield:{APP_NAME}.token' = None # type: ignore
     influxdb_url: f'opitem:"InfluxDB" opfield:{influx_creds_section}.url' = None # type: ignore
-    mongodb_user: f'opitem:"MongoDB" opfield:{APP_NAME}.username' = None # type: ignore
-    mongodb_password: f'opitem:"MongoDB" opfield:{APP_NAME}.password' = None # type: ignore
+    mongodb_user: f'opitem:"MongoDB" opfield:{APP_NAME}.user' = None # type: ignore
+    mongodb_password: f'opitem:"MongoDB" opfield:{APP_NAME}.pwd' = None # type: ignore
+    aws_akid: f'opitem:"AWS.{APP_NAME}" opfield:.username' = None # type: ignore
+    aws_sak: f'opitem:"AWS.{APP_NAME}" opfield:.password' = None # type: ignore
 
 
 # instantiate class
@@ -31,6 +32,7 @@ from pylib import (
     log
 )
 
+from pylib.aws import boto3_session
 from pylib.threads import bye, die
 from pylib.zmq import zmq_term
 
@@ -60,15 +62,15 @@ ACTION_NONE = 0
 
 
 def main():
-    log.setLevel(logging.INFO)
+    log.setLevel(logging.DEBUG)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     md_conn = None
     try:
         # Connecting to MongoDB cluster
         mongodb_db_name = app_config.get('mongodb', 'db_name')
-        mongodb_collection_name = app_config.get('mongodb', 'cluster_name')
-        log.debug(f'Opening MongoDB connection {creds.mongodb_user}@{mongodb_db_name}::{mongodb_collection_name}...')
+        mongodb_collection_name = app_config.get('mongodb', 'collection_name')
+        log.info(f'Opening MongoDB connection {creds.mongodb_user}@{mongodb_db_name}::{mongodb_collection_name}...')
         mongodb_connection_string = app_config.get('mongodb', 'conn_string')
         db_url = mongodb_connection_string.replace('__USER__', creds.mongodb_user).replace('__PASSWORD__', creds.mongodb_password)
         md_conn = MongoClient(db_url)
@@ -80,14 +82,21 @@ def main():
         cursor = md_collection.find(query, projection=projection, sort=sort)
         for doc in cursor:
             log.info(f'{doc!s}')
-
         sqs_queue_name = app_config.get('aws', 'sqs_queue_name')
         log.info(f'Creating SQS client for queue {sqs_queue_name}')
-        sqs = boto3.resource('sqs')
-        sqs_queue = sqs.get_queue_by_name(QueueName=sqs_queue_name)
-        for sqs_message in sqs_queue.receive_messages(WaitTimeSeconds=20):
-            # forward for further processing
-            message_body = sqs_message.body
+        sqs = boto3_session.client('sqs')
+        sqs_queue_url = app_config.get('aws', 'sqs_queue_url')
+        response = sqs.receive_message(
+            QueueUrl=sqs_queue_url,
+            AttributeNames=['All'],
+            MaxNumberOfMessages=10,
+            MessageAttributeNames=['All'],
+            VisibilityTimeout=30,
+            WaitTimeSeconds=0
+        )
+        # Print out the received messages
+        for message in response['Messages']:
+            message_body = message['Body']
             log.info(f'SQS message says {message_body}')
 
         log.info('Starting local SQLite database...')
