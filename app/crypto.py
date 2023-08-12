@@ -29,7 +29,7 @@ def encrypt(header: str, payload: str):
     return json.dumps(dict(zip(json_k, json_v)))
 
 
-def decrypt(payload: str):
+def decrypt(header: str, payload: str):
     if payload is None:
         return
     log.debug(f'Decrypting {len(payload)} bytes.')
@@ -38,6 +38,9 @@ def decrypt(payload: str):
     jv = {k:b64decode(b64[k]) for k in json_k}
     key = b64decode(creds.aes_sym_key)
     cipher = AES.new(key, AES.MODE_GCM, nonce=jv['nonce'])
-    cipher.update(jv['header'])
+    h = jv['header']
+    if h.decode('utf-8') != header:
+        raise AssertionError(f'Mismatched header, expected {header} but decrypting {h}.')
+    cipher.update(h)
     plaintext = cipher.decrypt_and_verify(jv['ciphertext'], jv['tag'])
     return plaintext.decode('utf-8')

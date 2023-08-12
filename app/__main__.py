@@ -21,7 +21,9 @@ class CredsConfig:
     mongodb_password: f'opitem:"MongoDB" opfield:{APP_NAME}.pwd' = None # type: ignore
     aws_akid: f'opitem:"AWS.{APP_NAME}" opfield:.username' = None # type: ignore
     aws_sak: f'opitem:"AWS.{APP_NAME}" opfield:.password' = None # type: ignore
-
+    investec_client_id: f'opitem:"Investec" opfield:.client_id' = None # type: ignore
+    investec_secret: f'opitem:"Investec" opfield:.secret' = None # type: ignore
+    investec_apikey: f'opitem:"Investec" opfield:.api_key' = None # type: ignore
 
 # instantiate class
 builtins.creds_config = CredsConfig()
@@ -53,12 +55,15 @@ from .database import (
 )
 
 from .bot import (
+    start,
+    registration,
+    help_command,
+    cancel,
     echo,
-    telegram_error_handler
+    telegram_error_handler,
+    ACTION_AUTHORIZE,
+    ACTION_NONE
 )
-
-
-ACTION_NONE = 0
 
 
 def main():
@@ -67,6 +72,8 @@ def main():
     asyncio.set_event_loop(loop)
     md_conn = None
     try:
+        log.info('Starting local SQLite database...')
+        loop.run_until_complete(db_startup())
         # Connecting to MongoDB cluster
         mongodb_db_name = app_config.get('mongodb', 'db_name')
         mongodb_collection_name = app_config.get('mongodb', 'collection_name')
@@ -95,12 +102,11 @@ def main():
             WaitTimeSeconds=0
         )
         # Print out the received messages
-        for message in response['Messages']:
-            message_body = message['Body']
-            log.info(f'SQS message says {message_body}')
+        if 'Messages' in response.keys():
+            for message in response['Messages']:
+                message_body = message['Body']
+                log.info(f'SQS message says {message_body}')
 
-        log.info('Starting local SQLite database...')
-        loop.run_until_complete(db_startup())
         log.info('Starting Telegram Bot...')
         """Start the bot."""
         # Create the Application and pass it your bot's token.
@@ -108,6 +114,10 @@ def main():
         #application.bot_data["custom"] = None
         # bot commands
         command_handlers = [
+            CommandHandler("start", start),
+            CommandHandler("help", help_command),
+            CallbackQueryHandler(callback=cancel, pattern="^" + str(ACTION_NONE) + "$"),
+            CallbackQueryHandler(callback=registration, pattern="^" + str(ACTION_AUTHORIZE) + "$")
         ]
         for handler in command_handlers:
             application.add_handler(handler)
