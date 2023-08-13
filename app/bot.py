@@ -4,7 +4,10 @@ import urllib
 
 import simplejson as json
 
-from typing import Optional
+from typing import Optional, Tuple
+
+from pymongo.collection import Collection
+from pymongo.cursor import Cursor
 
 from sentry_sdk.integrations.logging import ignore_logger
 
@@ -32,6 +35,8 @@ from telegram.ext import (
     ConversationHandler
 )
 
+from investec_api_python import InvestecOpenApiClient
+
 # Reduce Sentry noise
 ignore_logger('telegram.ext._updater')
 
@@ -45,7 +50,6 @@ DEFAULT_TAG_UNTAGGED = '_untagged_'
 from .influx import influxdb
 
 from .database import (
-    AccessToken,
     Account,
     Card,
     User,
@@ -93,6 +97,103 @@ async def validate(command_name: str, update: Update, validate_registration=True
             )
             return None
     return db_user
+
+
+async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db_user: User = await validate(command_name='accounts', update=update)
+    if db_user is None:
+        return
+    user: TelegramUser = update.effective_user
+    await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
+
+    telegram_user = app_config.get('telegram', 'enabled_users_csv')
+    if str(user.id) == telegram_user:
+        access_token: Optional[Tuple] = await get_access_token(telegram_user_id=user.id, user_id=db_user.id)
+        creds = json.loads(db_user.investec_credentials)
+        client = InvestecOpenApiClient(
+            client_id=db_user.investec_client_id,
+            secret=creds['secret'],
+            api_key=creds['api_key'],
+            additional_headers={'Accept-Encoding': 'gzip, deflate, br'},
+            access_token=access_token)
+        if access_token is None or client.access_token != access_token[0]:
+            log.debug(f'Persisting access token...')
+            await update_access_token(
+                telegram_user_id=user.id,
+                user_id=db_user.id,
+                access_token=client.access_token,
+                access_token_expiry=client.access_token_expiry)
+
+        log.debug(f'Fetching Investec accounts...')
+        response = client.get_accounts()
+        await add_accounts(
+            telegram_user_id=user.id,
+            user_id=db_user.id,
+            account_info=response)
+        log.debug(f'Accounts response: {response!s}')
+        message = ''
+        for account in response:
+            account_number = account['accountNumber']
+            account_name = account['accountName']
+            message += f'{account_name}: {account_number}'
+        await update.message.reply_text(
+            text=message,
+            parse_mode=ParseMode.HTML
+        )
+    return ConversationHandler.END
+
+
+async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db_user: User = await validate(command_name='cards', update=update)
+    if db_user is None:
+        return
+    user: TelegramUser = update.effective_user
+    await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
+
+
+
+    await update.message.reply_text(
+        text='hi',
+        parse_mode=ParseMode.HTML
+    )
+    return ConversationHandler.END
+
+
+async def report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db_user: User = await validate(command_name='report', update=update)
+    if db_user is None:
+        return
+    user: TelegramUser = update.effective_user
+    await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
+
+    telegram_user = app_config.get('telegram', 'enabled_users_csv')
+    if str(user.id) == telegram_user:
+        query = {}
+        projection = {}
+        sort = []
+        md_collection: Collection = context.bot_data['mongodb_collection']
+        log.debug(f'Fetching data from MongoDB collection...')
+        cursor = md_collection.find(query, projection=projection, sort=sort)
+
+        account_map = {}
+        for doc in cursor:
+            account_number = doc['accountNumber']
+            amount = doc['centsAmount']
+            currency = doc['currencyCode']
+            if account_number not in account_map.keys():
+                account_map[account_number] = amount
+            else:
+                account_map[account_number] += amount
+
+        message = f'{len(account_map)} charges:'
+        for account_number in account_map:
+            message += f' Account {account_number} has {account_map[account_number]}c charges.'
+
+        await update.message.reply_text(
+            text=message,
+            parse_mode=ParseMode.HTML
+        )
+    return ConversationHandler.END
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

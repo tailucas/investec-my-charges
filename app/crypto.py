@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pylib import (
     creds,
     log
@@ -16,7 +18,7 @@ def digest(payload: str):
     return SHA384.new(data=bytearray(payload, encoding='utf-8')).hexdigest()
 
 
-def encrypt(header: str, payload: str):
+def encrypt(header: str, payload: str) -> str:
     log.debug(f'Encrypting {len(payload)} bytes.')
     header = bytearray(header, encoding='utf-8')
     data = bytearray(payload, encoding='utf-8')
@@ -29,9 +31,9 @@ def encrypt(header: str, payload: str):
     return json.dumps(dict(zip(json_k, json_v)))
 
 
-def decrypt(header: str, payload: str):
+def decrypt(header: str, payload: str) -> str:
     if payload is None:
-        return
+        return None
     log.debug(f'Decrypting {len(payload)} bytes.')
     b64 = json.loads(payload)
     json_k = [ 'nonce', 'header', 'ciphertext', 'tag' ]

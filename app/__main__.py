@@ -4,6 +4,8 @@ import logging.handlers
 import asyncio
 import builtins
 
+from typing import Optional
+
 # setup builtins used by pylib init
 from . import APP_NAME
 builtins.SENTRY_EXTRAS = []
@@ -39,6 +41,9 @@ from pylib.threads import bye, die
 from pylib.zmq import zmq_term
 
 from pymongo import MongoClient
+from pymongo.database import Database
+from pymongo.collection import Collection
+from pymongo.cursor import Cursor
 
 from telegram.ext import (
     Application,
@@ -55,6 +60,9 @@ from .database import (
 )
 
 from .bot import (
+    accounts,
+    cards,
+    report,
     start,
     registration,
     help_command,
@@ -70,25 +78,20 @@ def main():
     log.setLevel(logging.DEBUG)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    md_conn = None
+    md_conn: Optional[MongoClient] = None
     try:
         log.info('Starting local SQLite database...')
         loop.run_until_complete(db_startup())
-        # Connecting to MongoDB cluster
+        # MongoDB cluster
         mongodb_db_name = app_config.get('mongodb', 'db_name')
         mongodb_collection_name = app_config.get('mongodb', 'collection_name')
         log.info(f'Opening MongoDB connection {creds.mongodb_user}@{mongodb_db_name}::{mongodb_collection_name}...')
         mongodb_connection_string = app_config.get('mongodb', 'conn_string')
         db_url = mongodb_connection_string.replace('__USER__', creds.mongodb_user).replace('__PASSWORD__', creds.mongodb_password)
         md_conn = MongoClient(db_url)
-        md_db = md_conn[mongodb_db_name]
-        md_collection = md_db[mongodb_collection_name]
-        query = {}
-        projection = {}
-        sort = []
-        cursor = md_collection.find(query, projection=projection, sort=sort)
-        for doc in cursor:
-            log.info(f'{doc!s}')
+        md_db: Database = md_conn[mongodb_db_name]
+        md_collection: Collection = md_db[mongodb_collection_name]
+        # SQS client
         sqs_queue_name = app_config.get('aws', 'sqs_queue_name')
         log.info(f'Creating SQS client for queue {sqs_queue_name}')
         sqs = boto3_session.client('sqs')
@@ -106,14 +109,17 @@ def main():
             for message in response['Messages']:
                 message_body = message['Body']
                 log.info(f'SQS message says {message_body}')
-
         log.info('Starting Telegram Bot...')
         """Start the bot."""
         # Create the Application and pass it your bot's token.
         application = Application.builder().token(creds.telegram_bot_api_token).build()
+        application.bot_data['mongodb_collection'] = md_collection
         #application.bot_data["custom"] = None
         # bot commands
         command_handlers = [
+            CommandHandler("accounts", accounts),
+            CommandHandler("cards", cards),
+            CommandHandler("report", report),
             CommandHandler("start", start),
             CommandHandler("help", help_command),
             CallbackQueryHandler(callback=cancel, pattern="^" + str(ACTION_NONE) + "$"),
