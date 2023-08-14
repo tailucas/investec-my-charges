@@ -302,25 +302,29 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     accounts: Optional[Sequence[Account]] = await get_accounts(
         telegram_user_id=user.id,
         user_id=db_user.id)
-    account_summary = f'0 accounts.'
+    account_summary = f'No account metadata saved.\n'
     if accounts:
-        account_summary = f'{len(accounts)} accounts:'
+        account_summary = f''
         for account in accounts:
             info: dict = json.loads(account.account_info)
-            account_summary += f' {info["productName"]} ({info["accountNumber"]})'
+            account_summary += f'{emoji.emojize(":ledger:")} {info["productName"]} ({info["accountNumber"]})\n'
     cards: Optional[Sequence[Card]] = await get_cards(
         telegram_user_id=user.id,
         user_id=db_user.id
     )
-    card_summary = f' 0 cards.'
+    card_summary = f'No card metadata saved.\n'
     if cards:
-        card_summary = f' {len(cards)} cards.'
+        card_summary = f''
         for card in cards:
             info: dict = json.loads(card.card_info)
-            card_summary += f' {info["EmbossedName"]} ({info["CardNumber"]})'
+            card_summary += f'{emoji.emojize(":credit_card:")} {info["EmbossedName"]} ({info["CardNumber"]})\n'
     influxdb.write('bot', 'show_profile', 1)
+    if accounts is None and cards is None:
+        response_message = f'{account_summary}{card_summary}\nTry a profile refresh.'
+    else:
+        response_message = f'{account_summary}{card_summary}'
     await query.edit_message_text(
-        text=f'{account_summary}{card_summary}',
+        text=response_message,
         parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
