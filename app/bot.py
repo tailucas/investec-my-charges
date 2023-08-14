@@ -4,7 +4,7 @@ import urllib
 
 import simplejson as json
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Sequence
 
 from pymongo.collection import Collection
 from pymongo.cursor import Cursor
@@ -42,8 +42,10 @@ ignore_logger('telegram.ext._updater')
 
 ACTION_SETTINGS_PREFIX = "settings"
 
-ACTION_AUTHORIZE = 2
 ACTION_NONE = 0
+ACTION_AUTHORIZE = 2
+ACTION_REFRESH_PROFILE = 3
+ACTION_SHOW_PROFILE = 4
 
 DEFAULT_TAG_UNTAGGED = '_untagged_'
 
@@ -73,6 +75,8 @@ async def validate(command_name: str, update: Update, validate_registration=True
     if str(user.id) not in allowed_users:
         log.warning(f'{command_name}: ignoring user {user.id} not in allowlist.')
         return None
+    else:
+        log.debug(f'Telegram user {user.id} is in the allow-list: {allowed_users}')
     log.info(f'{command_name}: Telegram user ID {user.id} (language {user.language_code}).')
     influxdb.write('command', f'{command_name}', 1)
     db_user: Optional[User] = None
@@ -206,17 +210,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
         elif db_user.telegram_user_id != user.id:
             raise AssertionError(f'Telegram user ID mismatch for {user.id}, got {db_user.telegram_user_id} instead.')
-        access_token: Optional[AccessToken] = await get_access_token(
+        access_token: Optional[Tuple] = await get_access_token(
             telegram_user_id=db_user.telegram_user_id,
             user_id=db_user.id)
         if access_token is not None:
-            log.info(f'Access token has an expiry of {access_token.access_token_expiry}.')
+            log.info(f'Access token has an expiry of {access_token[1]}.')
         else:
             log.info(f'No access token stored for user.')
         response_message = rf'{emoji.emojize(":check_box_with_check:")} {user.first_name}, you are authorized.'
         user_keyboard = [
             [
                 InlineKeyboardButton("Reauthorize", callback_data=str(ACTION_AUTHORIZE)),
+                InlineKeyboardButton("Refresh Profile", callback_data=str(ACTION_REFRESH_PROFILE)),
+            ],
+            [
+                InlineKeyboardButton("Show Profile", callback_data=str(ACTION_SHOW_PROFILE)),
                 InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
             ]
         ]
@@ -227,6 +235,93 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text=response_message,
         reply_markup=reply_markup
     )
+    return ConversationHandler.END
+
+
+async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user: TelegramUser = update.effective_user
+    db_user: User = await validate(command_name='refresh', update=update)
+    query = update.callback_query
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    await query.edit_message_text(
+        text=f'{emoji.emojize(":hourglass_not_done:")}',
+        parse_mode=ParseMode.MARKDOWN)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    access_token: Optional[Tuple] = await get_access_token(telegram_user_id=user.id, user_id=db_user.id)
+    creds = json.loads(db_user.investec_credentials)
+    client = InvestecOpenApiClient(
+        client_id=db_user.investec_client_id,
+        secret=creds['secret'],
+        api_key=creds['api_key'],
+        additional_headers={'Accept-Encoding': 'gzip, deflate, br'},
+        access_token=access_token)
+    log.debug(f'Fetching Investec accounts for Telegram user {user.id}...')
+    response = client.get_accounts()
+    log.debug(f'Accounts: {response!s}')
+    await add_accounts(
+        telegram_user_id=user.id,
+        user_id=db_user.id,
+        account_info=response)
+    account_count = len(response)
+    if client.access_token and client.access_token_expiry:
+        if access_token is None or client.access_token != access_token[0]:
+            log.debug(f'Persisting access token...')
+            await update_access_token(
+                telegram_user_id=user.id,
+                user_id=db_user.id,
+                access_token=client.access_token,
+                access_token_expiry=client.access_token_expiry)
+    log.debug(f'Fetching Investec cards for Telegram user {user.id}...')
+    response = client.get_cards()
+    log.debug(f'Cards: {response!s}')
+    await add_cards(
+        telegram_user_id=user.id,
+        user_id=db_user.id,
+        card_info=response)
+    card_count = len(response)
+    influxdb.write('bot', 'refresh', 1)
+    await query.edit_message_text(
+        text=f'Profile refresh complete. {account_count} account(s) and {card_count} card(s).',
+        parse_mode=ParseMode.MARKDOWN)
+    return ConversationHandler.END
+
+
+async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user: TelegramUser = update.effective_user
+    db_user: User = await validate(command_name='show_profile', update=update)
+    query = update.callback_query
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    await query.edit_message_text(
+        text=f'{emoji.emojize(":hourglass_not_done:")}',
+        parse_mode=ParseMode.MARKDOWN)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    accounts: Optional[Sequence[Account]] = await get_accounts(
+        telegram_user_id=user.id,
+        user_id=db_user.id)
+    account_summary = f'0 accounts.'
+    if accounts:
+        account_summary = f'{len(accounts)} accounts:'
+        for account in accounts:
+            info: dict = json.loads(account.account_info)
+            account_summary += f' {info["productName"]} ({info["accountNumber"]})'
+    cards: Optional[Sequence[Card]] = await get_cards(
+        telegram_user_id=user.id,
+        user_id=db_user.id
+    )
+    card_summary = f' 0 cards.'
+    if cards:
+        card_summary = f' {len(cards)} cards.'
+        for card in cards:
+            info: dict = json.loads(card.card_info)
+            card_summary += f' {info["EmbossedName"]} ({info["CardNumber"]})'
+    influxdb.write('bot', 'show_profile', 1)
+    await query.edit_message_text(
+        text=f'{account_summary}{card_summary}',
+        parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
 

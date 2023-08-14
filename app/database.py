@@ -67,9 +67,11 @@ class DbCard(Base):
     __tablename__ = 'card'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey('user.id'), index=True)
+    account_id = Column(String(32), ForeignKey('account.account_id'))
     card_id = Column(Integer, index=True)
     card_number = Column(JSON)
     card_number_digest = Column(String(96), index=True)
+    card_info = Column(JSON)
     UniqueConstraint(user_id, card_id)
 
 """
@@ -77,12 +79,12 @@ DTOs
 """
 class User:
     def __init__(self, telegram_user_id: int, db: DbUser) -> None:
-        self.id: int = db.id.type.python_type()
-        self.telegram_user_id: int = db.telegram_user_id.type.python_type()
+        self.id: int = db.id
+        self.telegram_user_id: int = db.telegram_user_id
         self.investec_client_id: str = decrypt(header=str(telegram_user_id), payload=str(db.investec_client_id))
-        self.investec_client_id_digest: str = db.investec_client_id_digest.type.python_type()
+        self.investec_client_id_digest: str = db.investec_client_id_digest
         self.investec_credentials: str = decrypt(header=str(telegram_user_id), payload=str(db.investec_credentials))
-        self.investec_credentials_digest: str = db.investec_credentials_digest.type.python_type()
+        self.investec_credentials_digest: str = db.investec_credentials_digest
 
 
 class AccessToken:
@@ -96,8 +98,8 @@ class AccessToken:
     def __init__(self, telegram_user_id: int, db: DbAccessToken) -> None:
         self.telegram_user_id: int = telegram_user_id
         self.access_token: str = decrypt(header=str(telegram_user_id), payload=str(db.access_token))
-        self.access_token_digest: str = db.access_token_digest.type.python_type()
-        self.access_token_expiry: datetime = db.access_token_expiry.type.python_type()
+        self.access_token_digest: str = db.access_token_digest
+        self.access_token_expiry: datetime = db.access_token_expiry
 
 
 class Account:
@@ -108,18 +110,19 @@ class Account:
 
     def __init__(self, telegram_user_id: int, db: DbAccount) -> None:
         self.telegram_user_id: int = telegram_user_id
-        self.account_id: str = db.account_id.type.python_type()
+        self.account_id: str = db.account_id
         self.account_number: str = decrypt(header=str(telegram_user_id), payload=str(db.account_number))
-        self.account_number_digest: str = db.account_number_digest.type.python_type()
+        self.account_number_digest: str = db.account_number_digest
         self.account_info: str = decrypt(header=str(telegram_user_id), payload=str(db.account_info))
 
 
 class Card:
     def __init__(self, telegram_user_id: int, db: DbCard) -> None:
         self.telegram_user_id: int = telegram_user_id
-        self.card_id: int = db.card_id.type.python_type()
+        self.card_id: int = db.card_id
         self.card_number: str = decrypt(header=str(telegram_user_id), payload=str(db.card_number))
-        self.card_number_digest: str = db.card_number_digest.type.python_type()
+        self.card_number_digest: str = db.card_number_digest
+        self.card_info: str = decrypt(header=str(telegram_user_id), payload=str(db.card_info))
 
 
 """
@@ -142,7 +145,7 @@ class AppDB:
         return r.scalars().one_or_none()
 
     async def _get_db_account(self, user_id: int, account_id: str) -> Optional[DbAccount]:
-        r: Result = await self.db_session.execute(select(DbAccount).where(DbAccount.user_id==user_id & DbAccount.account_id == account_id))
+        r: Result = await self.db_session.execute(select(DbAccount).where((DbAccount.user_id==user_id) & (DbAccount.account_id == account_id)))
         return r.scalars().one_or_none()
 
     async def _get_db_accounts(self, user_id: int) -> Sequence[DbAccount]:
@@ -150,7 +153,7 @@ class AppDB:
         return r.scalars().all()
 
     async def _get_db_card(self, user_id: int, card_id: int) -> Optional[DbCard]:
-        r: Result = await self.db_session.execute(select(DbCard).where(DbCard.user_id==user_id & DbCard.card_id == card_id))
+        r: Result = await self.db_session.execute(select(DbCard).where((DbCard.user_id==user_id) & (DbCard.card_id == card_id)))
         return r.scalars().one_or_none()
 
     async def _get_db_cards(self, user_id: int) -> Sequence[DbCard]:
@@ -250,17 +253,24 @@ class AppDB:
                 cards.append(Card(telegram_user_id=telegram_user_id, db=db))
             return cards
 
-    async def add_cards(self, telegram_user_id: int, user_id: int, cards: List[Tuple]):
-        log.debug(f'Adding {len(cards)} cards for Telegram user {telegram_user_id} (DB user {user_id}).')
-        for card_id, card_number in cards:
+    async def add_cards(self, telegram_user_id: int, user_id: int, card_info: List[Dict[str, str]]):
+        log.debug(f'Adding {len(card_info)} cards for Telegram user {telegram_user_id} (DB user {user_id}).')
+        for info in card_info:
+            card_id = int(info['CardKey'])
             db_card: DbCard = await self._get_db_card(user_id=user_id, card_id=card_id)
             if db_card is None:
+                account_id = info['AccountId']
+                card_number = info['CardNumber']
                 db_card: DbCard = DbCard(
                     user_id=user_id,
+                    account_id=account_id,
                     card_id=card_id,
                     card_number=encrypt(header=str(telegram_user_id), payload=card_number),
-                    card_number_digest=digest(payload=card_number))
-                self.db_session.add(db_card)
+                    card_number_digest=digest(payload=card_number),
+                    card_info=encrypt(header=str(telegram_user_id), payload=json.dumps(info)))
+            else:
+                db_card.card_info = encrypt(header=str(telegram_user_id), payload=json.dumps(info))
+            self.db_session.add(db_card)
         await self.db_session.flush()
 
 """
@@ -300,7 +310,7 @@ async def update_access_token(telegram_user_id: int, user_id: int, access_token:
                 access_token=access_token,
                 access_token_expiry=access_token_expiry)
 
-async def get_accounts(telegram_user_id: int, user_id: int) -> Optional[List[Account]]:
+async def get_accounts(telegram_user_id: int, user_id: int) -> Optional[Sequence[Account]]:
     async with async_session() as session:
         async with session.begin():
             db = AppDB(session)
@@ -317,7 +327,7 @@ async def add_accounts(telegram_user_id: int, user_id: int, account_info: List[D
                 user_id=user_id,
                 account_info=account_info)
 
-async def get_cards(telegram_user_id: int, user_id: int) -> Optional[List[Card]]:
+async def get_cards(telegram_user_id: int, user_id: int) -> Optional[Sequence[Card]]:
     async with async_session() as session:
         async with session.begin():
             db = AppDB(session)
@@ -325,14 +335,14 @@ async def get_cards(telegram_user_id: int, user_id: int) -> Optional[List[Card]]
                 telegram_user_id=telegram_user_id,
                 user_id=user_id)
 
-async def add_cards(telegram_user_id: int, user_id: int, cards: List[Tuple]) -> None:
+async def add_cards(telegram_user_id: int, user_id: int, card_info: List[Dict[str, str]]) -> None:
     async with async_session() as session:
         async with session.begin():
             db = AppDB(session)
             return await db.add_cards(
                 telegram_user_id=telegram_user_id,
                 user_id=user_id,
-                cards=cards)
+                card_info=card_info)
 
 async def db_startup():
     log.info(f'Database startup {db_tablespace}...')

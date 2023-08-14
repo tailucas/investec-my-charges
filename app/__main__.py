@@ -64,12 +64,16 @@ from .bot import (
     cards,
     report,
     start,
+    show_profile,
+    refresh,
     registration,
     help_command,
     cancel,
     echo,
     telegram_error_handler,
     ACTION_AUTHORIZE,
+    ACTION_REFRESH_PROFILE,
+    ACTION_SHOW_PROFILE,
     ACTION_NONE
 )
 
@@ -122,8 +126,10 @@ def main():
             CommandHandler("report", report),
             CommandHandler("start", start),
             CommandHandler("help", help_command),
+            CallbackQueryHandler(callback=show_profile, pattern="^" + str(ACTION_SHOW_PROFILE) + "$"),
+            CallbackQueryHandler(callback=refresh, pattern="^" + str(ACTION_REFRESH_PROFILE) + "$"),
+            CallbackQueryHandler(callback=registration, pattern="^" + str(ACTION_AUTHORIZE) + "$"),
             CallbackQueryHandler(callback=cancel, pattern="^" + str(ACTION_NONE) + "$"),
-            CallbackQueryHandler(callback=registration, pattern="^" + str(ACTION_AUTHORIZE) + "$")
         ]
         for handler in command_handlers:
             application.add_handler(handler)
