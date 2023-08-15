@@ -3,6 +3,8 @@ set -e
 set -o pipefail
 cd "$(dirname "$0")"
 
+. <(sed 's/^/export /' /opt/app/cron.env)
+
 BACKUP_FILENAME_SUFFIX=""
 if [ -n "${1:-}" ]; then
   BACKUP_FILENAME_SUFFIX="_${1}"
@@ -16,10 +18,10 @@ export AWS_SECRET_ACCESS_KEY="$(echo "${SAK}" | poetry run /opt/app/pylib/cred_t
 if [ -f "${TABLESPACE_PATH}" ]; then
   # create backup process
   sqlite3 "${TABLESPACE_PATH}" ".backup /tmp/${APP_NAME}.db"
-  poetry run aws s3 cp "/tmp/${APP_NAME}.db" "s3://tailucas-automation/${BACKUP_FILENAME}" --only-show-errors
+  poetry run aws s3 cp "/tmp/${APP_NAME}.db" "s3://${BACKUP_BUCKET}/${BACKUP_FILENAME}" --only-show-errors
 else
   # only if the tablespace does not exist
-  poetry run aws s3 cp "s3://tailucas-automation/${APP_NAME}.db" "${TABLESPACE_PATH}" --only-show-errors
+  poetry run aws s3 cp "s3://${BACKUP_BUCKET}/${APP_NAME}.db" "${TABLESPACE_PATH}" --only-show-errors
 fi
 unset AWS_ACCESS_KEY_ID
 unset AWS_SECRET_ACCESS_KEY
