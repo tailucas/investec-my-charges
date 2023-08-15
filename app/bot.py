@@ -2,6 +2,7 @@ import emoji
 import string
 import urllib
 
+import pandas as pd
 import plotly.express as px
 import simplejson as json
 
@@ -48,8 +49,10 @@ ACTION_AUTHORIZE = 2
 ACTION_REFRESH_PROFILE = 3
 ACTION_SHOW_PROFILE = 4
 ACTION_FORGET = 5
+ACTION_HISTORY = 6
 
 DEFAULT_TAG_UNTAGGED = '_untagged_'
+DEFAULT_HISTORY_ALL = '_all_'
 
 from .influx import influxdb
 
@@ -63,6 +66,7 @@ from .database import (
     add_user,
     get_accounts,
     add_accounts,
+    get_card,
     get_cards,
     add_cards
 )
@@ -155,13 +159,104 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     user: TelegramUser = update.effective_user
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
+    cards: Optional[Sequence[Card]] = await get_cards(telegram_user_id=user.id, user_id=db_user.id)
+    if cards:
+        response_message = rf'Pick a {emoji.emojize(":credit_card:")}.'
+        user_keyboard = []
+        buttons = []
+        for card in cards:
+            info = json.loads(card.card_info)
+            card_label = info['EmbossedName']
+            buttons.append(InlineKeyboardButton(card_label, callback_data=f'{ACTION_HISTORY}:{card.card_id}'))
+        user_keyboard = [
+            buttons,
+            [
+                InlineKeyboardButton("All", callback_data=str(ACTION_HISTORY)),
+                InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(user_keyboard)
+        await update.message.reply_html(
+            text=response_message,
+            reply_markup=reply_markup
+        )
+    return ConversationHandler.END
 
 
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user: TelegramUser = update.effective_user
+    db_user: User = await validate(command_name='history', update=update)
+    query = update.callback_query
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    await query.edit_message_text(
+        text=f'{emoji.emojize(":hourglass_not_done:")}',
+        parse_mode=ParseMode.MARKDOWN)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
-    await update.message.reply_text(
-        text='hi',
+    card_id = query.data.split(':')[1]
+    log.debug(f'Telegram user {user.id} selects card ID {card_id}')
+
+    account_numbers = []
+    card_ids = []
+    if card_id == DEFAULT_HISTORY_ALL:
+        cards: Optional[Sequence[Card]] = await get_cards(telegram_user_id=user.id, user_id=db_user.id)
+        if cards:
+            for card in cards:
+                info = json.loads(card.card_info)
+                account_numbers.append(info['AccountNumber'])
+                card_ids.append(str(card.card_id))
+    else:
+        card: Optional[Card] = await get_card(telegram_user_id=user.id, user_id=db_user.id, card_id=int(card_id))
+        if card:
+            info = json.loads(card.card_info)
+            account_numbers.append(info['AccountNumber'])
+            card_ids.append(str(card.card_id))
+    log.debug(f'Running MongoDB query: {account_numbers=}, {card_ids=}')
+    # fetch associated transaction data
+    mongo_query = {
+        "accountNumber": {
+            "$in": account_numbers
+        },
+        "card.id" : {
+            "$in": card_ids
+        },
+        "type": "card",
+        "reference": {
+                "$ne": "simulation"
+            }
+        }
+    projection = {}
+    sort = []
+    md_collection: Collection = context.bot_data['mongodb_collection']
+    log.debug(f'Fetching data from MongoDB collection...')
+    cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
+    costs = {}
+    i=0
+    for doc in cursor:
+        i+=1
+        amount = int(doc['centsAmount'])
+        merchant = doc['merchant']['name']
+        if merchant not in costs.keys():
+            costs[merchant] = amount
+        else:
+            costs[merchant] += amount
+    log.debug(f'{i} transactions fetched.')
+    to_plot = {'Merchant': [], 'Total': []}
+    for merchant, amount_mind in costs.items():
+        to_plot['Merchant'].append(merchant)
+        #amount_majd = amount_mind / 100.0
+        #amount_label = f'R{amount_majd:.2f}'
+        to_plot['Total'].append(amount_mind)
+    await query.edit_message_text(
+        text=f'{len(to_plot)} charges.',
         parse_mode=ParseMode.HTML
     )
+    df = pd.DataFrame(to_plot)
+    fig = px.pie(df, values='Total', names='Merchant', title='Proportion of charges')
+    img_bytes = fig.to_image(format="png")
+    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=img_bytes)
     return ConversationHandler.END
 
 
@@ -193,31 +288,28 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     md_collection: Collection = context.bot_data['mongodb_collection']
     log.debug(f'Fetching data from MongoDB collection...')
     cursor = md_collection.find(query, projection=projection, sort=sort)
-    account_map = {}
+    costs = {}
     for doc in cursor:
-        account_number = doc['accountNumber']
-        amount = doc['centsAmount']
-        currency = doc['currencyCode']
-        if account_number not in account_map.keys():
-            account_map[account_number] = amount
+        amount = int(doc['centsAmount'])
+        merchant = doc['merchant']['name']
+        if merchant not in costs.keys():
+            costs[merchant] = amount
         else:
-            account_map[account_number] += amount
-
-    message = f'{len(account_map)} charges:'
-    for account_number in account_map:
-        message += f' Account {account_number} has {account_map[account_number]}c charges.'
-
+            costs[merchant] += amount
+    to_plot = {'Merchant': [], 'Total': []}
+    for merchant, amount_mind in costs.items():
+        to_plot['Merchant'].append(merchant)
+        #amount_majd = amount_mind / 100.0
+        #amount_label = f'R{amount_majd:.2f}'
+        to_plot['Total'].append(amount_mind)
     await update.message.reply_text(
-        text=message,
+        text=f'{len(to_plot)} charges.',
         parse_mode=ParseMode.HTML
     )
-
-    df = px.data.gapminder().query("year == 2007").query("continent == 'Europe'")
-    df.loc[df['pop'] < 2.e6, 'country'] = 'Other countries' # Represent only large countries
-    fig = px.pie(df, values='pop', names='country', title='Population of European continent')
+    df = pd.DataFrame(to_plot)
+    fig = px.pie(df, values='Total', names='Merchant', title='Proportion of charges')
     img_bytes = fig.to_image(format="png")
     await update.message.reply_photo(photo=img_bytes)
-
     return ConversationHandler.END
 
 

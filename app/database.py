@@ -242,6 +242,12 @@ class AppDB:
             self.db_session.add(db_account)
         await self.db_session.flush()
 
+    async def get_card(self, telegram_user_id: int, user_id: int, card_id: int) -> Optional[Card]:
+        db_card: DbCard = await self._get_db_card(user_id=user_id, card_id=card_id)
+        if db_card is None:
+            return None
+        return Card(telegram_user_id=telegram_user_id, db=db_card)
+
     async def get_cards(self, telegram_user_id: int, user_id: int) -> Optional[List[Card]]:
         log.debug(f'Fetching cards for Telegram user {telegram_user_id} (DB user {user_id}).')
         db_cards: Sequence[DbCard] = await self._get_db_cards(user_id=user_id)
@@ -326,6 +332,15 @@ async def add_accounts(telegram_user_id: int, user_id: int, account_info: List[D
                 telegram_user_id=telegram_user_id,
                 user_id=user_id,
                 account_info=account_info)
+
+async def get_card(telegram_user_id: int, user_id: int, card_id) -> Optional[Card]:
+    async with async_session() as session:
+        async with session.begin():
+            db = AppDB(session)
+            return await db.get_card(
+                telegram_user_id=telegram_user_id,
+                user_id=user_id,
+                card_id=card_id)
 
 async def get_cards(telegram_user_id: int, user_id: int) -> Optional[Sequence[Card]]:
     async with async_session() as session:
