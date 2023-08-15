@@ -62,6 +62,7 @@ from .database import (
 from .bot import (
     accounts,
     cards,
+    forget,
     report,
     start,
     show_profile,
@@ -74,6 +75,7 @@ from .bot import (
     ACTION_AUTHORIZE,
     ACTION_REFRESH_PROFILE,
     ACTION_SHOW_PROFILE,
+    ACTION_FORGET,
     ACTION_NONE
 )
 
@@ -126,6 +128,7 @@ def main():
             CommandHandler("report", report),
             CommandHandler("start", start),
             CommandHandler("help", help_command),
+            CallbackQueryHandler(callback=forget, pattern="^" + str(ACTION_FORGET) + "$"),
             CallbackQueryHandler(callback=show_profile, pattern="^" + str(ACTION_SHOW_PROFILE) + "$"),
             CallbackQueryHandler(callback=refresh, pattern="^" + str(ACTION_REFRESH_PROFILE) + "$"),
             CallbackQueryHandler(callback=registration, pattern="^" + str(ACTION_AUTHORIZE) + "$"),

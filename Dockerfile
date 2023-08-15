@@ -1,13 +1,11 @@
-FROM tailucas/base-app:20230708
+FROM tailucas/base-app:20230815
 # for system/site packages
 USER root
 # system setup
-# https://github.com/inter169/systs/blob/master/alpine/crond/README.md
-RUN apk update \
-    && apk upgrade \
-    && apk --no-cache add \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
         html-xml-utils \
-        sqlite
+        sqlite3
 # user scripts
 COPY backup_db.sh .
 # cron jobs

@@ -25,6 +25,8 @@ pycryptodome = "^3.18.0"
 influxdb-client = "^1.37.0"
 plotly = "^5.15.0"
 investec-api-python = {path = "investec-api-python"}
+pandas = "^2.0.3"
+kaleido = "0.2.1"
 
 [build-system]
 requires = ["poetry-core"]

@@ -2,6 +2,7 @@ import emoji
 import string
 import urllib
 
+import plotly.express as px
 import simplejson as json
 
 from typing import Optional, Tuple, Sequence
@@ -46,6 +47,7 @@ ACTION_NONE = 0
 ACTION_AUTHORIZE = 2
 ACTION_REFRESH_PROFILE = 3
 ACTION_SHOW_PROFILE = 4
+ACTION_FORGET = 5
 
 DEFAULT_TAG_UNTAGGED = '_untagged_'
 
@@ -169,34 +171,53 @@ async def report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     user: TelegramUser = update.effective_user
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
+    # fetch account data
+    accounts: Optional[Sequence[Account]] = await get_accounts(
+        telegram_user_id=user.id,
+        user_id=db_user.id)
+    account_numbers = []
+    if accounts:
+        for account in accounts:
+            account_numbers.append(account.account_number)
+    # fetch associated transaction data
+    query = {
+        "accountNumber": {
+            "$in": account_numbers
+        },
+        "reference": {
+            "$ne": "simulation"
+            }
+        }
+    projection = {}
+    sort = []
+    md_collection: Collection = context.bot_data['mongodb_collection']
+    log.debug(f'Fetching data from MongoDB collection...')
+    cursor = md_collection.find(query, projection=projection, sort=sort)
+    account_map = {}
+    for doc in cursor:
+        account_number = doc['accountNumber']
+        amount = doc['centsAmount']
+        currency = doc['currencyCode']
+        if account_number not in account_map.keys():
+            account_map[account_number] = amount
+        else:
+            account_map[account_number] += amount
 
-    telegram_user = app_config.get('telegram', 'enabled_users_csv')
-    if str(user.id) == telegram_user:
-        query = {}
-        projection = {}
-        sort = []
-        md_collection: Collection = context.bot_data['mongodb_collection']
-        log.debug(f'Fetching data from MongoDB collection...')
-        cursor = md_collection.find(query, projection=projection, sort=sort)
+    message = f'{len(account_map)} charges:'
+    for account_number in account_map:
+        message += f' Account {account_number} has {account_map[account_number]}c charges.'
 
-        account_map = {}
-        for doc in cursor:
-            account_number = doc['accountNumber']
-            amount = doc['centsAmount']
-            currency = doc['currencyCode']
-            if account_number not in account_map.keys():
-                account_map[account_number] = amount
-            else:
-                account_map[account_number] += amount
+    await update.message.reply_text(
+        text=message,
+        parse_mode=ParseMode.HTML
+    )
 
-        message = f'{len(account_map)} charges:'
-        for account_number in account_map:
-            message += f' Account {account_number} has {account_map[account_number]}c charges.'
+    df = px.data.gapminder().query("year == 2007").query("continent == 'Europe'")
+    df.loc[df['pop'] < 2.e6, 'country'] = 'Other countries' # Represent only large countries
+    fig = px.pie(df, values='pop', names='country', title='Population of European continent')
+    img_bytes = fig.to_image(format="png")
+    await update.message.reply_photo(photo=img_bytes)
 
-        await update.message.reply_text(
-            text=message,
-            parse_mode=ParseMode.HTML
-        )
     return ConversationHandler.END
 
 
@@ -225,6 +246,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             ],
             [
                 InlineKeyboardButton("Show Profile", callback_data=str(ACTION_SHOW_PROFILE)),
+                InlineKeyboardButton("Forget Me", callback_data=str(ACTION_FORGET))
+            ],
+            [
                 InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
             ]
         ]
@@ -325,6 +349,26 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         response_message = f'{account_summary}{card_summary}'
     await query.edit_message_text(
         text=response_message,
+        parse_mode=ParseMode.MARKDOWN)
+    return ConversationHandler.END
+
+
+async def forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user: TelegramUser = update.effective_user
+    db_user: User = await validate(command_name='forget', update=update)
+    query = update.callback_query
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    await query.edit_message_text(
+        text=f'{emoji.emojize(":hourglass_not_done:")}',
+        parse_mode=ParseMode.MARKDOWN)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+
+
+    influxdb.write('bot', 'forget', 1)
+    await query.edit_message_text(
+        text='Forgotten.',
         parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
