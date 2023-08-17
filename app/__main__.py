@@ -63,8 +63,10 @@ from .bot import (
     accounts,
     cards,
     forget,
-    report,
     history,
+    account_history,
+    account_report,
+    card_report,
     start,
     show_profile,
     refresh,
@@ -78,7 +80,9 @@ from .bot import (
     ACTION_SHOW_PROFILE,
     ACTION_FORGET,
     ACTION_NONE,
-    ACTION_HISTORY
+    ACTION_ACCOUNT_REPORT,
+    ACTION_CARD_REPORT,
+    ACTION_ACCOUNT_HISTORY
 )
 
 
@@ -127,12 +131,14 @@ def main():
         command_handlers = [
             CommandHandler("accounts", accounts),
             CommandHandler("cards", cards),
-            CommandHandler("report", report),
-            CommandHandler("start", start),
+            CommandHandler("history", history),
             CommandHandler("help", help_command),
+            CommandHandler("start", start),
             CallbackQueryHandler(callback=forget, pattern="^" + str(ACTION_FORGET) + "$"),
             CallbackQueryHandler(callback=show_profile, pattern="^" + str(ACTION_SHOW_PROFILE) + "$"),
-            CallbackQueryHandler(callback=history, pattern=f'^{ACTION_HISTORY}.*$'),
+            CallbackQueryHandler(callback=account_report, pattern=f'^{ACTION_ACCOUNT_REPORT}.*$'),
+            CallbackQueryHandler(callback=account_history, pattern=f'^{ACTION_ACCOUNT_HISTORY}.*$'),
+            CallbackQueryHandler(callback=card_report, pattern=f'^{ACTION_CARD_REPORT}.*$'),
             CallbackQueryHandler(callback=refresh, pattern="^" + str(ACTION_REFRESH_PROFILE) + "$"),
             CallbackQueryHandler(callback=registration, pattern="^" + str(ACTION_AUTHORIZE) + "$"),
             CallbackQueryHandler(callback=cancel, pattern="^" + str(ACTION_NONE) + "$"),

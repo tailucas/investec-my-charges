@@ -49,10 +49,12 @@ ACTION_AUTHORIZE = 2
 ACTION_REFRESH_PROFILE = 3
 ACTION_SHOW_PROFILE = 4
 ACTION_FORGET = 5
-ACTION_HISTORY = 6
+ACTION_ACCOUNT_REPORT = 6
+ACTION_CARD_REPORT = 7
+ACTION_ACCOUNT_HISTORY = 8
 
 DEFAULT_TAG_UNTAGGED = '_untagged_'
-DEFAULT_HISTORY_ALL = '_all_'
+DEFAULT_ALL = '_all_'
 
 from .influx import influxdb
 
@@ -115,6 +117,131 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     user: TelegramUser = update.effective_user
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
+    accounts: Optional[Sequence[Account]] = await get_accounts(telegram_user_id=user.id, user_id=db_user.id)
+    if accounts:
+        response_message = rf'{emoji.emojize(":ledger:")} Pick an account:'
+        user_keyboard = []
+        for account in accounts:
+            info = json.loads(account.account_info)
+            account_label = info['productName']
+            user_keyboard.append([InlineKeyboardButton(account_label, callback_data=f'{ACTION_ACCOUNT_REPORT}:{account.account_number}')])
+        user_keyboard.append(
+            [
+                InlineKeyboardButton("All", callback_data=str(DEFAULT_ALL)),
+                InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
+            ]
+        )
+        reply_markup = InlineKeyboardMarkup(user_keyboard)
+        await update.message.reply_html(
+            text=response_message,
+            reply_markup=reply_markup
+        )
+    return ConversationHandler.END
+
+
+async def account_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user: TelegramUser = update.effective_user
+    db_user: User = await validate(command_name='account_report', update=update)
+    query = update.callback_query
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    await query.edit_message_text(
+        text=f'{emoji.emojize(":hourglass_not_done:")}',
+        parse_mode=ParseMode.MARKDOWN)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+
+    account_number = query.data.split(':')[1]
+    log.debug(f'Telegram user {user.id} selects account ID {account_number}')
+    account_numbers = []
+    if account_number == DEFAULT_ALL:
+        accounts: Optional[Sequence[Account]] = await get_accounts(telegram_user_id=user.id, user_id=db_user.id)
+        if accounts:
+            for account in accounts:
+                account_numbers.append(account.account_number)
+    else:
+        account_numbers.append(account_number)
+    # fetch associated transaction data
+    mongo_query = {
+        "accountNumber": {
+            "$in": account_numbers
+        },
+        "reference": {
+            "$ne": "simulation"
+            }
+        }
+    projection = {}
+    sort = []
+    md_collection: Collection = context.bot_data['mongodb_collection']
+    log.debug(f'Fetching data from MongoDB collection...')
+    cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
+    costs = {}
+    for doc in cursor:
+        amount = int(doc['centsAmount'])
+        merchant = doc['merchant']['name']
+        if merchant not in costs.keys():
+            costs[merchant] = amount
+        else:
+            costs[merchant] += amount
+    to_plot = {'Merchant': [], 'Total': []}
+    for merchant, amount_mind in costs.items():
+        to_plot['Merchant'].append(merchant)
+        #amount_majd = amount_mind / 100.0
+        #amount_label = f'R{amount_majd:.2f}'
+        to_plot['Total'].append(amount_mind)
+    await query.edit_message_text(
+        text=f'{len(to_plot)} charges.',
+        parse_mode=ParseMode.HTML
+    )
+    df = pd.DataFrame(to_plot)
+    fig = px.pie(df, values='Total', names='Merchant', title='Proportion of charges')
+    img_bytes = fig.to_image(format="png")
+    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=img_bytes)
+    return ConversationHandler.END
+
+
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    db_user: User = await validate(command_name='history', update=update)
+    if db_user is None:
+        return
+    user: TelegramUser = update.effective_user
+    await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
+    accounts: Optional[Sequence[Account]] = await get_accounts(telegram_user_id=user.id, user_id=db_user.id)
+    if accounts:
+        response_message = rf'{emoji.emojize(":ledger:")} Pick an account:'
+        user_keyboard = []
+        for account in accounts:
+            info = json.loads(account.account_info)
+            account_label = info['productName']
+            user_keyboard.append([InlineKeyboardButton(account_label, callback_data=f'{ACTION_ACCOUNT_HISTORY}:{account.account_number}')])
+        user_keyboard.append(
+            [
+                InlineKeyboardButton("All", callback_data=str(ACTION_ACCOUNT_HISTORY)),
+                InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
+            ]
+        )
+        reply_markup = InlineKeyboardMarkup(user_keyboard)
+        await update.message.reply_html(
+            text=response_message,
+            reply_markup=reply_markup
+        )
+    return ConversationHandler.END
+
+
+async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user: TelegramUser = update.effective_user
+    db_user: User = await validate(command_name='account_history', update=update)
+    query = update.callback_query
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    await query.edit_message_text(
+        text=f'{emoji.emojize(":hourglass_not_done:")}',
+        parse_mode=ParseMode.MARKDOWN)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+
+    account_number = query.data.split(':')[1]
+    log.debug(f'Telegram user {user.id} selects account ID {account_number}')
 
     telegram_user = app_config.get('telegram', 'enabled_users_csv')
     if str(user.id) == telegram_user:
@@ -136,17 +263,13 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         log.debug(f'Fetching Investec accounts...')
         response = client.get_accounts()
-        await add_accounts(
-            telegram_user_id=user.id,
-            user_id=db_user.id,
-            account_info=response)
         log.debug(f'Accounts response: {response!s}')
         message = ''
         for account in response:
             account_number = account['accountNumber']
             account_name = account['accountName']
             message += f'{account_name}: {account_number}'
-        await update.message.reply_text(
+        await query.edit_message_text(
             text=message,
             parse_mode=ParseMode.HTML
         )
@@ -161,20 +284,18 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
     cards: Optional[Sequence[Card]] = await get_cards(telegram_user_id=user.id, user_id=db_user.id)
     if cards:
-        response_message = rf'Pick a {emoji.emojize(":credit_card:")}.'
+        response_message = rf'{emoji.emojize(":credit_card:")} Pick a card:'
         user_keyboard = []
-        buttons = []
         for card in cards:
             info = json.loads(card.card_info)
             card_label = info['EmbossedName']
-            buttons.append(InlineKeyboardButton(card_label, callback_data=f'{ACTION_HISTORY}:{card.card_id}'))
-        user_keyboard = [
-            buttons,
+            user_keyboard.append([InlineKeyboardButton(card_label, callback_data=f'{ACTION_CARD_REPORT}:{card.card_id}')])
+        user_keyboard.append(
             [
-                InlineKeyboardButton("All", callback_data=str(ACTION_HISTORY)),
+                InlineKeyboardButton("All", callback_data=str(DEFAULT_ALL)),
                 InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
             ]
-        ]
+        )
         reply_markup = InlineKeyboardMarkup(user_keyboard)
         await update.message.reply_html(
             text=response_message,
@@ -183,9 +304,9 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return ConversationHandler.END
 
 
-async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user: TelegramUser = update.effective_user
-    db_user: User = await validate(command_name='history', update=update)
+    db_user: User = await validate(command_name='card_report', update=update)
     query = update.callback_query
     # CallbackQueries need to be answered, even if no notification to the user is needed
     # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
@@ -200,7 +321,7 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     account_numbers = []
     card_ids = []
-    if card_id == DEFAULT_HISTORY_ALL:
+    if card_id == DEFAULT_ALL:
         cards: Optional[Sequence[Card]] = await get_cards(telegram_user_id=user.id, user_id=db_user.id)
         if cards:
             for card in cards:
@@ -257,59 +378,6 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     fig = px.pie(df, values='Total', names='Merchant', title='Proportion of charges')
     img_bytes = fig.to_image(format="png")
     await context.bot.send_photo(chat_id=update.effective_chat.id, photo=img_bytes)
-    return ConversationHandler.END
-
-
-async def report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    db_user: User = await validate(command_name='report', update=update)
-    if db_user is None:
-        return
-    user: TelegramUser = update.effective_user
-    await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
-    # fetch account data
-    accounts: Optional[Sequence[Account]] = await get_accounts(
-        telegram_user_id=user.id,
-        user_id=db_user.id)
-    account_numbers = []
-    if accounts:
-        for account in accounts:
-            account_numbers.append(account.account_number)
-    # fetch associated transaction data
-    query = {
-        "accountNumber": {
-            "$in": account_numbers
-        },
-        "reference": {
-            "$ne": "simulation"
-            }
-        }
-    projection = {}
-    sort = []
-    md_collection: Collection = context.bot_data['mongodb_collection']
-    log.debug(f'Fetching data from MongoDB collection...')
-    cursor = md_collection.find(query, projection=projection, sort=sort)
-    costs = {}
-    for doc in cursor:
-        amount = int(doc['centsAmount'])
-        merchant = doc['merchant']['name']
-        if merchant not in costs.keys():
-            costs[merchant] = amount
-        else:
-            costs[merchant] += amount
-    to_plot = {'Merchant': [], 'Total': []}
-    for merchant, amount_mind in costs.items():
-        to_plot['Merchant'].append(merchant)
-        #amount_majd = amount_mind / 100.0
-        #amount_label = f'R{amount_majd:.2f}'
-        to_plot['Total'].append(amount_mind)
-    await update.message.reply_text(
-        text=f'{len(to_plot)} charges.',
-        parse_mode=ParseMode.HTML
-    )
-    df = pd.DataFrame(to_plot)
-    fig = px.pie(df, values='Total', names='Merchant', title='Proportion of charges')
-    img_bytes = fig.to_image(format="png")
-    await update.message.reply_photo(photo=img_bytes)
     return ConversationHandler.END
 
 
@@ -518,7 +586,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # CallbackQueries need to be answered, even if no notification to the user is needed
     # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
     await query.answer()
-    await query.edit_message_text(text=f"No changes made.")
+    await query.edit_message_text(text=f"OK")
     return ConversationHandler.END
 
 
