@@ -1,4 +1,6 @@
 import emoji
+import html
+import requests
 import string
 import urllib
 
@@ -175,14 +177,36 @@ async def account_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     md_collection: Collection = context.bot_data['mongodb_collection']
     log.debug(f'Fetching data from MongoDB collection...')
     cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
+    currency_map = {}
     costs = {}
+    i=0
     for doc in cursor:
-        amount = int(doc['centsAmount'])
+        i+=1
+        amount_mind = int(doc['centsAmount'])
+        currency = str(doc['currencyCode']).upper()
+        if currency != 'ZAR' and amount_mind > 0:
+            if currency not in currency_map.keys():
+                log.debug(f'Getting currency conversion rate from {currency} to ZAR...')
+                url = 'https://api.exchangerate.host/latest'
+                response = requests.get(
+                    url=url,
+                    params={
+                        'base': currency,
+                        'symbols': 'ZAR',
+                        'amount': 1
+                    })
+                data = response.json()
+                log.debug(f'Currency response is {data}')
+                factor = float(data['rates']['ZAR'])
+                currency_map[currency] = factor
+            amount_mind_zar = currency_map[currency] * amount_mind
+        else:
+            amount_mind_zar = amount_mind
         merchant = doc['merchant']['name']
         if merchant not in costs.keys():
-            costs[merchant] = amount
+            costs[merchant] = amount_mind_zar
         else:
-            costs[merchant] += amount
+            costs[merchant] += amount_mind_zar
     to_plot = {'Merchant': [], 'Total': []}
     for merchant, amount_mind in costs.items():
         to_plot['Merchant'].append(merchant)
@@ -190,8 +214,8 @@ async def account_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         #amount_label = f'R{amount_majd:.2f}'
         to_plot['Total'].append(amount_mind)
     await query.edit_message_text(
-        text=f'{len(to_plot)} charges.',
-        parse_mode=ParseMode.HTML
+        text=f'{i} transactions:',
+        parse_mode=ParseMode.MARKDOWN
     )
     df = pd.DataFrame(to_plot)
     fig = px.pie(df, values='Total', names='Merchant', title='Proportion of charges')
@@ -213,7 +237,7 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         for account in accounts:
             info = json.loads(account.account_info)
             account_label = info['productName']
-            user_keyboard.append([InlineKeyboardButton(account_label, callback_data=f'{ACTION_ACCOUNT_HISTORY}:{account.account_number}')])
+            user_keyboard.append([InlineKeyboardButton(account_label, callback_data=f'{ACTION_ACCOUNT_HISTORY}:{account.account_id}')])
         user_keyboard.append(
             [
                 InlineKeyboardButton("All", callback_data=str(ACTION_ACCOUNT_HISTORY)),
@@ -240,8 +264,8 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         parse_mode=ParseMode.MARKDOWN)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
-    account_number = query.data.split(':')[1]
-    log.debug(f'Telegram user {user.id} selects account ID {account_number}')
+    account_id = query.data.split(':')[1]
+    log.debug(f'Telegram user {user.id} selects account ID {account_id}')
 
     telegram_user = app_config.get('telegram', 'enabled_users_csv')
     if str(user.id) == telegram_user:
@@ -260,18 +284,25 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 user_id=db_user.id,
                 access_token=client.access_token,
                 access_token_expiry=client.access_token_expiry)
-
-        log.debug(f'Fetching Investec accounts...')
-        response = client.get_accounts()
+        response = client.get_account_transactions(account_id=account_id)
         log.debug(f'Accounts response: {response!s}')
-        message = ''
-        for account in response:
-            account_number = account['accountNumber']
-            account_name = account['accountName']
-            message += f'{account_name}: {account_number}'
+        messages = []
+        for tran in response:
+            tran_dc = tran['type']
+            if tran_dc == 'CREDIT':
+                tran_dc = '+'
+            else:
+                tran_dc = ''
+            tran_type = tran['transactionType']
+            tran_desc = tran['description']
+            tran_desc = html.unescape(tran_desc)
+            tran_date = tran['transactionDate']
+            tran_amnt = tran['amount']
+            tran_amnt = f'R{float(tran_amnt):.2f}'
+            messages.append(f'_{tran_date}_ `{tran_dc}{tran_amnt}` *{tran_desc}* _({tran_type})_')
         await query.edit_message_text(
-            text=message,
-            parse_mode=ParseMode.HTML
+            text='\n'.join(messages),
+            parse_mode=ParseMode.MARKDOWN
         )
     return ConversationHandler.END
 
@@ -355,14 +386,35 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
     costs = {}
     i=0
+    currency_map = {}
     for doc in cursor:
         i+=1
-        amount = int(doc['centsAmount'])
+        amount_mind = int(doc['centsAmount'])
+        currency = str(doc['currencyCode']).upper()
+        if currency != 'ZAR' and amount_mind > 0:
+            if currency not in currency_map.keys():
+                log.debug(f'Getting currency conversion rate from {currency} to ZAR...')
+                url = 'https://api.exchangerate.host/latest'
+                response = requests.get(
+                    url=url,
+                    params={
+                        'base': currency,
+                        'symbols': 'ZAR',
+                        'amount': 1
+                    })
+                data = response.json()
+                log.debug(f'Currency response is {data}')
+                factor = float(data['rates']['ZAR'])
+                currency_map[currency] = factor
+            amount_mind_zar = currency_map[currency] * amount_mind
+        else:
+            amount_mind_zar = amount_mind
         merchant = doc['merchant']['name']
         if merchant not in costs.keys():
-            costs[merchant] = amount
+            costs[merchant] = amount_mind_zar
         else:
-            costs[merchant] += amount
+            costs[merchant] += amount_mind_zar
+
     log.debug(f'{i} transactions fetched.')
     to_plot = {'Merchant': [], 'Total': []}
     for merchant, amount_mind in costs.items():
@@ -372,7 +424,7 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         to_plot['Total'].append(amount_mind)
     await query.edit_message_text(
         text=f'{len(to_plot)} charges.',
-        parse_mode=ParseMode.HTML
+        parse_mode=ParseMode.MARKDOWN
     )
     df = pd.DataFrame(to_plot)
     fig = px.pie(df, values='Total', names='Merchant', title='Proportion of charges')
