@@ -21,6 +21,7 @@ from pylib import (
     log,
     threads
 )
+from pylib.zmq import zmq_socket
 
 from telegram import (
     Update,
@@ -40,6 +41,10 @@ from telegram.ext import (
 )
 
 from investec_api_python import InvestecOpenApiClient
+from .event import TransactionUpdate, CustomContext
+import zmq
+from .currency import URL_WORKER_CURRENCY_CONVERTER
+
 
 # Reduce Sentry noise
 ignore_logger('telegram.ext._updater')
@@ -177,36 +182,18 @@ async def account_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     md_collection: Collection = context.bot_data['mongodb_collection']
     log.debug(f'Fetching data from MongoDB collection...')
     cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
-    currency_map = {}
     costs = {}
     i=0
     for doc in cursor:
         i+=1
-        amount_mind = int(doc['centsAmount'])
-        currency = str(doc['currencyCode']).upper()
-        if currency != 'ZAR' and amount_mind > 0:
-            if currency not in currency_map.keys():
-                log.debug(f'Getting currency conversion rate from {currency} to ZAR...')
-                url = 'https://api.exchangerate.host/latest'
-                response = requests.get(
-                    url=url,
-                    params={
-                        'base': currency,
-                        'symbols': 'ZAR',
-                        'amount': 1
-                    })
-                data = response.json()
-                log.debug(f'Currency response is {data}')
-                factor = float(data['rates']['ZAR'])
-                currency_map[currency] = factor
-            amount_mind_zar = currency_map[currency] * amount_mind
-        else:
-            amount_mind_zar = amount_mind
+        charge_cents_home_currency = await home_currency(
+            charge_cents=int(doc['centsAmount']),
+            charge_currency=str(doc['currencyCode']).upper())
         merchant = doc['merchant']['name']
         if merchant not in costs.keys():
-            costs[merchant] = amount_mind_zar
+            costs[merchant] = charge_cents_home_currency
         else:
-            costs[merchant] += amount_mind_zar
+            costs[merchant] += charge_cents_home_currency
     to_plot = {'Merchant': [], 'Total': []}
     for merchant, amount_mind in costs.items():
         to_plot['Merchant'].append(merchant)
@@ -335,6 +322,27 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return ConversationHandler.END
 
 
+async def home_currency(charge_cents: int, charge_currency: str):
+    home_currency_code = app_config.get('app', 'home_currency_code')
+    currency_converter = zmq_socket(zmq.REQ)
+    currency_converter.connect(addr=URL_WORKER_CURRENCY_CONVERTER)
+    currency_query = {
+        'function_path': 'latest',
+        'params': {
+            'base': charge_currency,
+            'symbols': home_currency_code,
+            'amount': 1
+        }
+    }
+    currency_converter.send_pyobj(currency_query)
+    response = currency_converter.recv_pyobj()
+    currency_converter.close()
+    rate = response['rate']
+    charge_cents_home_currency = rate * charge_cents
+    log.debug(f'Converted {charge_cents}c {charge_currency} to {charge_cents_home_currency}c {home_currency_code} ({rate=})')
+    return charge_cents_home_currency
+
+
 async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user: TelegramUser = update.effective_user
     db_user: User = await validate(command_name='card_report', update=update)
@@ -386,34 +394,16 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
     costs = {}
     i=0
-    currency_map = {}
     for doc in cursor:
         i+=1
-        amount_mind = int(doc['centsAmount'])
-        currency = str(doc['currencyCode']).upper()
-        if currency != 'ZAR' and amount_mind > 0:
-            if currency not in currency_map.keys():
-                log.debug(f'Getting currency conversion rate from {currency} to ZAR...')
-                url = 'https://api.exchangerate.host/latest'
-                response = requests.get(
-                    url=url,
-                    params={
-                        'base': currency,
-                        'symbols': 'ZAR',
-                        'amount': 1
-                    })
-                data = response.json()
-                log.debug(f'Currency response is {data}')
-                factor = float(data['rates']['ZAR'])
-                currency_map[currency] = factor
-            amount_mind_zar = currency_map[currency] * amount_mind
-        else:
-            amount_mind_zar = amount_mind
+        charge_cents_home_currency = await home_currency(
+            charge_cents=int(doc['centsAmount']),
+            charge_currency=str(doc['currencyCode']).upper())
         merchant = doc['merchant']['name']
         if merchant not in costs.keys():
-            costs[merchant] = amount_mind_zar
+            costs[merchant] = charge_cents_home_currency
         else:
-            costs[merchant] += amount_mind_zar
+            costs[merchant] += charge_cents_home_currency
 
     log.debug(f'{i} transactions fetched.')
     to_plot = {'Merchant': [], 'Total': []}
@@ -423,7 +413,7 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         #amount_label = f'R{amount_majd:.2f}'
         to_plot['Total'].append(amount_mind)
     await query.edit_message_text(
-        text=f'{len(to_plot)} charges.',
+        text=f'{i} charges.',
         parse_mode=ParseMode.MARKDOWN
     )
     df = pd.DataFrame(to_plot)
@@ -645,3 +635,15 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def telegram_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.warning(msg="Bot error:", exc_info=context.error)
     return ConversationHandler.END
+
+
+async def transaction_update(update: TransactionUpdate, context: CustomContext) -> None:
+    influxdb.write('bot', 'transaction_update', 1)
+    chat_member: TelegramChatMember = await context.bot.get_chat_member(chat_id=update.user_id, user_id=update.user_id)
+    telegram_user: TelegramUser = chat_member.user
+    log.debug(f'Transaction for Telegram user ID {update.user_id}.')
+    log.debug(f'Transaction details {update.payload.keys()!s}.')
+    await context.bot.send_message(
+        chat_id=update.user_id,
+        text=f"{telegram_user.first_name}, {html.unescape(update.payload['merchant']['name'])}",
+        parse_mode=ParseMode.HTML)

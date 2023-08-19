@@ -15,6 +15,8 @@ COPY config/cron/backup_db ./config/cron/
 RUN /opt/app/app_setup.sh
 # tools
 COPY investec-api-python/ ./investec-api-python/
+# refresh pylib from base
+COPY pylib/ ./pylib/
 # switch to user
 USER app
 # override configuration

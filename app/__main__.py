@@ -36,7 +36,6 @@ from pylib import (
     log
 )
 
-from pylib.aws import boto3_session
 from pylib.threads import bye, die
 from pylib.zmq import zmq_term
 
@@ -50,6 +49,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
+    TypeHandler,
     filters
 )
 
@@ -75,6 +75,7 @@ from .bot import (
     cancel,
     echo,
     telegram_error_handler,
+    transaction_update,
     ACTION_AUTHORIZE,
     ACTION_REFRESH_PROFILE,
     ACTION_SHOW_PROFILE,
@@ -85,13 +86,21 @@ from .bot import (
     ACTION_ACCOUNT_HISTORY
 )
 
+from .currency import CurrencyConverter
+from .event import TransactionUpdate, SQSEvent
+
 
 def main():
     log.setLevel(logging.DEBUG)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     md_conn: Optional[MongoClient] = None
+    currency_converter: Optional[CurrencyConverter] = None
     try:
+        # Application threads
+        currency_converter = CurrencyConverter(
+            home_currency=app_config.get('app', 'home_currency_code'))
+        currency_converter.start()
         log.info('Starting local SQLite database...')
         loop.run_until_complete(db_startup())
         # MongoDB cluster
@@ -103,24 +112,6 @@ def main():
         md_conn = MongoClient(db_url)
         md_db: Database = md_conn[mongodb_db_name]
         md_collection: Collection = md_db[mongodb_collection_name]
-        # SQS client
-        sqs_queue_name = app_config.get('aws', 'sqs_queue_name')
-        log.info(f'Creating SQS client for queue {sqs_queue_name}')
-        sqs = boto3_session.client('sqs')
-        sqs_queue_url = app_config.get('aws', 'sqs_queue_url')
-        response = sqs.receive_message(
-            QueueUrl=sqs_queue_url,
-            AttributeNames=['All'],
-            MaxNumberOfMessages=10,
-            MessageAttributeNames=['All'],
-            VisibilityTimeout=30,
-            WaitTimeSeconds=0
-        )
-        # Print out the received messages
-        if 'Messages' in response.keys():
-            for message in response['Messages']:
-                message_body = message['Body']
-                log.info(f'SQS message says {message_body}')
         log.info('Starting Telegram Bot...')
         """Start the bot."""
         # Create the Application and pass it your bot's token.
@@ -147,8 +138,13 @@ def main():
             application.add_handler(handler)
         # on non command i.e message - echo the message on Telegram
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+        # custom event triggers
+        application.add_handler(TypeHandler(type=TransactionUpdate, callback=transaction_update))
         # error handling
         application.add_error_handler(callback=telegram_error_handler)
+        # transaction events
+        sqs_events = SQSEvent(application=application)
+        sqs_events.start()
         influxdb.write('app', 'startup', 1)
         log.info('Starting Telegram Bot...')
         application.run_polling()

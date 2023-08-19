@@ -140,6 +140,10 @@ class AppDB:
         r: Result = await self.db_session.execute(select(DbUser).where(DbUser.telegram_user_id==telegram_user_id))
         return r.scalars().one_or_none()
 
+    async def _get_db_user_from_card(self, card_id: int) -> Optional[DbUser]:
+        r: Result = await self.db_session.execute(select(DbUser).join(DbCard).where(DbCard.card_id==card_id))
+        return r.scalars().one_or_none()
+
     async def _get_db_access_token(self, user_id: int) -> Optional[DbAccessToken]:
         r: Result = await self.db_session.execute(select(DbAccessToken).where(DbAccessToken.user_id==user_id))
         return r.scalars().one_or_none()
@@ -188,6 +192,14 @@ class AppDB:
             db_user.investec_credentials_digest = digest(investec_credentials)
         self.db_session.add(db_user)
         await self.db_session.flush()
+
+    async def get_user_from_card(self, card_id: int) -> Optional[User]:
+        log.debug(f'Fetching user information for card {card_id}.')
+        db: DbUser = await self._get_db_user_from_card(card_id=card_id)
+        if db is None:
+            return None
+        else:
+            return User(telegram_user_id=db.telegram_user_id, db=db)
 
     async def get_access_token(self, telegram_user_id: int, user_id: int) -> Optional[Tuple[str, datetime]]:
         log.debug(f'Fetching access token for Telegram user {telegram_user_id} (DB user {user_id}).')
@@ -297,6 +309,12 @@ async def add_user(telegram_user_id: int, user_id: int, investec_client_id: str,
                 user_id=user_id,
                 investec_client_id=investec_client_id,
                 investec_credentials=investec_credentials)
+
+async def get_user_from_card(card_id: int) -> Optional[User]:
+    async with async_session() as session:
+        async with session.begin():
+            db = AppDB(session)
+            return await db.get_user_from_card(card_id=card_id)
 
 async def get_access_token(telegram_user_id: int, user_id: int) -> Optional[Tuple[str, datetime]]:
     async with async_session() as session:
