@@ -1,4 +1,4 @@
-FROM tailucas/base-app:20230815_3
+FROM tailucas/base-app:20230821_2
 # for system/site packages
 USER root
 # system setup
@@ -13,7 +13,7 @@ RUN rm -f ./config/cron/base_job
 COPY config/cron/backup_db ./config/cron/
 # apply override
 RUN /opt/app/app_setup.sh
-# tools
+# submodule tools (use poetry develop=true)
 COPY investec-api-python/ ./investec-api-python/
 # refresh pylib from base
 COPY pylib/ ./pylib/

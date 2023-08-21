@@ -17,7 +17,7 @@ class CurrencyConverter(ZmqWorker):
         self._currency_map = {}
         self._home_currency = home_currency
 
-    async def process_message(self, message: Dict) -> Dict:
+    def process_message(self, message: Dict) -> Dict:
         log.debug(f'Processing {message=}')
         params = message['params']
         currency = params['base']

@@ -88,6 +88,7 @@ from .bot import (
 
 from .currency import CurrencyConverter
 from .event import TransactionUpdate, SQSEvent
+from .transaction import TransactionHistory
 
 
 def main():
@@ -98,6 +99,7 @@ def main():
     currency_converter: Optional[CurrencyConverter] = None
     try:
         # Application threads
+        log.info('Starting currency converter...')
         currency_converter = CurrencyConverter(
             home_currency=app_config.get('app', 'home_currency_code'))
         currency_converter.start()
@@ -105,18 +107,29 @@ def main():
         loop.run_until_complete(db_startup())
         # MongoDB cluster
         mongodb_db_name = app_config.get('mongodb', 'db_name')
-        mongodb_collection_name = app_config.get('mongodb', 'collection_name')
-        log.info(f'Opening MongoDB connection {creds.mongodb_user}@{mongodb_db_name}::{mongodb_collection_name}...')
+        log.info(f'Opening MongoDB connection {creds.mongodb_user}@{mongodb_db_name}...')
         mongodb_connection_string = app_config.get('mongodb', 'conn_string')
         db_url = mongodb_connection_string.replace('__USER__', creds.mongodb_user).replace('__PASSWORD__', creds.mongodb_password)
         md_conn = MongoClient(db_url)
         md_db: Database = md_conn[mongodb_db_name]
-        md_collection: Collection = md_db[mongodb_collection_name]
+        mongodb_card_collection_name = app_config.get('mongodb', 'card_collection_name')
+        log.info(f'Opening MongoDB connection {mongodb_card_collection_name}...')
+        md_card_collection: Collection = md_db[mongodb_card_collection_name]
+        # account history thread
+        mongodb_account_collection_name = app_config.get('mongodb', 'account_collection_name')
+        log.info(f'Opening MongoDB connection {mongodb_account_collection_name}...')
+        md_account_collection: Collection = md_db[mongodb_account_collection_name]
+        log.info('Starting transaction history synchronizer...')
+        transaction_history = TransactionHistory(
+            mongodb_collection=md_account_collection,
+            sync_interval=app_config.getint('app', 'transaction_history_refresh_interval_secs'))
+        transaction_history.start()
         log.info('Starting Telegram Bot...')
         """Start the bot."""
         # Create the Application and pass it your bot's token.
         application = Application.builder().token(creds.telegram_bot_api_token).build()
-        application.bot_data['mongodb_collection'] = md_collection
+        application.bot_data['mongodb_card_collection'] = md_card_collection
+        application.bot_data['mongodb_account_collection'] = md_account_collection
         #application.bot_data["custom"] = None
         # bot commands
         command_handlers = [

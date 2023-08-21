@@ -136,6 +136,10 @@ class AppDB:
     """
     Create DAOs
     """
+    async def _get_db_users(self) -> Sequence[DbUser]:
+        r: Result = await self.db_session.execute(select(DbUser))
+        return r.scalars().all()
+
     async def _get_db_user(self, telegram_user_id: int) -> Optional[DbUser]:
         r: Result = await self.db_session.execute(select(DbUser).where(DbUser.telegram_user_id==telegram_user_id))
         return r.scalars().one_or_none()
@@ -167,13 +171,22 @@ class AppDB:
     """
     Create DTOs
     """
+    async def get_users(self) -> Optional[Sequence[User]]:
+        log.debug(f'Fetching all user information...')
+        db_users: Sequence[DbUser] = await self._get_db_users()
+        if len(db_users) == 0:
+            return None
+        users: List[User] = []
+        for db_user in db_users:
+            users.append(User(telegram_user_id=db_user.telegram_user_id, db=db_user))
+        return users
+
     async def get_user(self, telegram_user_id: int) -> Optional[User]:
         log.debug(f'Fetching user information for Telegram user {telegram_user_id}.')
         db: DbUser = await self._get_db_user(telegram_user_id=telegram_user_id)
         if db is None:
             return None
-        else:
-            return User(telegram_user_id=telegram_user_id, db=db)
+        return User(telegram_user_id=telegram_user_id, db=db)
 
     async def add_user(self, telegram_user_id: int, investec_client_id: str, investec_credentials: str):
         log.debug(f'Adding user for Telegram user {telegram_user_id}.')
@@ -198,16 +211,14 @@ class AppDB:
         db: DbUser = await self._get_db_user_from_card(card_id=card_id)
         if db is None:
             return None
-        else:
-            return User(telegram_user_id=db.telegram_user_id, db=db)
+        return User(telegram_user_id=db.telegram_user_id, db=db)
 
     async def get_access_token(self, telegram_user_id: int, user_id: int) -> Optional[Tuple[str, datetime]]:
         log.debug(f'Fetching access token for Telegram user {telegram_user_id} (DB user {user_id}).')
         db = await self._get_db_access_token(user_id=user_id)
         if db is None:
             return None
-        else:
-            return AccessToken(telegram_user_id=telegram_user_id, db=db).token
+        return AccessToken(telegram_user_id=telegram_user_id, db=db).token
 
     async def update_access_token(self, telegram_user_id: int, user_id: int, access_token: str, access_token_expiry: datetime):
         log.debug(f'Updating access token for Telegram user {telegram_user_id} (DB user {user_id}).')
@@ -225,16 +236,22 @@ class AppDB:
         self.db_session.add(db_token)
         await self.db_session.flush()
 
+    async def get_account(self, telegram_user_id: int, user_id: int, account_id: str) -> Optional[Account]:
+        log.debug(f'Fetching account ID {account_id} for Telegram user {telegram_user_id} (DB user {user_id}).')
+        db_account: Optional[DbAccount] = await self._get_db_account(user_id=user_id, account_id=account_id)
+        if db_account is None:
+            return None
+        return Account(telegram_user_id=telegram_user_id, db=db_account)
+
     async def get_accounts(self, telegram_user_id: int, user_id: int) -> Optional[List[Account]]:
         log.debug(f'Fetching accounts for Telegram user {telegram_user_id} (DB user {user_id}).')
         db_accounts: Sequence[DbAccount] = await self._get_db_accounts(user_id=user_id)
-        if db_accounts is None:
+        if len(db_accounts) == 0:
             return None
-        else:
-            accounts: List[Account] = []
-            for db in db_accounts:
-                accounts.append(Account(telegram_user_id=telegram_user_id, db=db))
-            return accounts
+        accounts: List[Account] = []
+        for db in db_accounts:
+            accounts.append(Account(telegram_user_id=telegram_user_id, db=db))
+        return accounts
 
     async def add_accounts(self, telegram_user_id: int, user_id: int, account_info: List[Dict[str, str]]):
         log.debug(f'Adding {len(account_info)} accounts for Telegram user {telegram_user_id} (DB user {user_id}).')
@@ -263,13 +280,12 @@ class AppDB:
     async def get_cards(self, telegram_user_id: int, user_id: int) -> Optional[List[Card]]:
         log.debug(f'Fetching cards for Telegram user {telegram_user_id} (DB user {user_id}).')
         db_cards: Sequence[DbCard] = await self._get_db_cards(user_id=user_id)
-        if db_cards is None:
+        if len(db_cards) == 0:
             return None
-        else:
-            cards: List[Card] = []
-            for db in db_cards:
-                cards.append(Card(telegram_user_id=telegram_user_id, db=db))
-            return cards
+        cards: List[Card] = []
+        for db in db_cards:
+            cards.append(Card(telegram_user_id=telegram_user_id, db=db))
+        return cards
 
     async def add_cards(self, telegram_user_id: int, user_id: int, card_info: List[Dict[str, str]]):
         log.debug(f'Adding {len(card_info)} cards for Telegram user {telegram_user_id} (DB user {user_id}).')
@@ -294,6 +310,12 @@ class AppDB:
 """
 Module Methods
 """
+async def get_users() -> Optional[Sequence[User]]:
+    async with async_session() as session:
+        async with session.begin():
+            db = AppDB(session)
+            return await db.get_users()
+
 async def get_user(telegram_user_id: int) -> Optional[User]:
     async with async_session() as session:
         async with session.begin():
@@ -333,6 +355,15 @@ async def update_access_token(telegram_user_id: int, user_id: int, access_token:
                 user_id=user_id,
                 access_token=access_token,
                 access_token_expiry=access_token_expiry)
+
+async def get_account(telegram_user_id: int, user_id: int, account_id: str) -> Optional[Account]:
+    async with async_session() as session:
+        async with session.begin():
+            db = AppDB(session)
+            return await db.get_account(
+                telegram_user_id=telegram_user_id,
+                user_id=user_id,
+                account_id=account_id)
 
 async def get_accounts(telegram_user_id: int, user_id: int) -> Optional[Sequence[Account]]:
     async with async_session() as session:

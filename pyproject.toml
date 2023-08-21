@@ -26,7 +26,8 @@ plotly = "^5.15.0"
 investec-api-python = {path = "investec-api-python", develop = true}
 pandas = "^2.0.3"
 kaleido = "0.2.1"
-pylib = {path = "pylib", develop = true}
+lets-plot = "^4.0.0"
+pylib = {path = "pylib"}
 
 [build-system]
 requires = ["poetry-core"]

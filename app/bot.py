@@ -43,6 +43,7 @@ from telegram.ext import (
 from investec_api_python import InvestecOpenApiClient
 from .event import TransactionUpdate, CustomContext
 import zmq
+from zmq.asyncio import Socket
 from .currency import URL_WORKER_CURRENCY_CONVERTER
 
 
@@ -73,6 +74,7 @@ from .database import (
     update_access_token,
     get_user,
     add_user,
+    get_account,
     get_accounts,
     add_accounts,
     get_card,
@@ -131,7 +133,7 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         for account in accounts:
             info = json.loads(account.account_info)
             account_label = info['productName']
-            user_keyboard.append([InlineKeyboardButton(account_label, callback_data=f'{ACTION_ACCOUNT_REPORT}:{account.account_number}')])
+            user_keyboard.append([InlineKeyboardButton(account_label, callback_data=f'{ACTION_ACCOUNT_REPORT}:{account.account_id}')])
         user_keyboard.append(
             [
                 InlineKeyboardButton("All", callback_data=str(DEFAULT_ALL)),
@@ -158,42 +160,35 @@ async def account_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         parse_mode=ParseMode.MARKDOWN)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
-    account_number = query.data.split(':')[1]
-    log.debug(f'Telegram user {user.id} selects account ID {account_number}')
-    account_numbers = []
-    if account_number == DEFAULT_ALL:
-        accounts: Optional[Sequence[Account]] = await get_accounts(telegram_user_id=user.id, user_id=db_user.id)
-        if accounts:
-            for account in accounts:
-                account_numbers.append(account.account_number)
-    else:
-        account_numbers.append(account_number)
+    account_id = query.data.split(':')[1]
+    log.debug(f'Telegram user {user.id} selects account ID {account_id}')
     # fetch associated transaction data
     mongo_query = {
-        "accountNumber": {
-            "$in": account_numbers
+        "accountId": {
+            "$eq": account_id
         },
         "reference": {
             "$ne": "simulation"
-            }
         }
+    }
     projection = {}
     sort = []
-    md_collection: Collection = context.bot_data['mongodb_collection']
+    md_collection: Collection = context.bot_data['mongodb_account_collection']
     log.debug(f'Fetching data from MongoDB collection...')
     cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
     costs = {}
     i=0
     for doc in cursor:
+        tran_type = doc['type']
+        if tran_type == 'CREDIT':
+            continue
         i+=1
-        charge_cents_home_currency = await home_currency(
-            charge_cents=int(doc['centsAmount']),
-            charge_currency=str(doc['currencyCode']).upper())
-        merchant = doc['merchant']['name']
-        if merchant not in costs.keys():
-            costs[merchant] = charge_cents_home_currency
+        description = html.unescape(doc['description'])
+        charge_home_currency = int(doc['amount'])
+        if description not in costs.keys():
+            costs[description] = charge_home_currency
         else:
-            costs[merchant] += charge_cents_home_currency
+            costs[description] += charge_home_currency
     to_plot = {'Merchant': [], 'Total': []}
     for merchant, amount_mind in costs.items():
         to_plot['Merchant'].append(merchant)
@@ -201,7 +196,7 @@ async def account_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         #amount_label = f'R{amount_majd:.2f}'
         to_plot['Total'].append(amount_mind)
     await query.edit_message_text(
-        text=f'{i} transactions:',
+        text=f'{i} debits:',
         parse_mode=ParseMode.MARKDOWN
     )
     df = pd.DataFrame(to_plot)
@@ -253,44 +248,39 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     account_id = query.data.split(':')[1]
     log.debug(f'Telegram user {user.id} selects account ID {account_id}')
-
-    telegram_user = app_config.get('telegram', 'enabled_users_csv')
-    if str(user.id) == telegram_user:
-        access_token: Optional[Tuple] = await get_access_token(telegram_user_id=user.id, user_id=db_user.id)
-        creds = json.loads(db_user.investec_credentials)
-        client = InvestecOpenApiClient(
-            client_id=db_user.investec_client_id,
-            secret=creds['secret'],
-            api_key=creds['api_key'],
-            additional_headers={'Accept-Encoding': 'gzip, deflate, br'},
-            access_token=access_token)
-        if access_token is None or client.access_token != access_token[0]:
-            log.debug(f'Persisting access token...')
-            await update_access_token(
-                telegram_user_id=user.id,
-                user_id=db_user.id,
-                access_token=client.access_token,
-                access_token_expiry=client.access_token_expiry)
-        response = client.get_account_transactions(account_id=account_id)
-        log.debug(f'Accounts response: {response!s}')
-        messages = []
-        for tran in response:
-            tran_dc = tran['type']
-            if tran_dc == 'CREDIT':
-                tran_dc = '+'
-            else:
-                tran_dc = ''
-            tran_type = tran['transactionType']
-            tran_desc = tran['description']
-            tran_desc = html.unescape(tran_desc)
-            tran_date = tran['transactionDate']
-            tran_amnt = tran['amount']
-            tran_amnt = f'R{float(tran_amnt):.2f}'
-            messages.append(f'_{tran_date}_ `{tran_dc}{tran_amnt}` *{tran_desc}* _({tran_type})_')
-        await query.edit_message_text(
-            text='\n'.join(messages),
-            parse_mode=ParseMode.MARKDOWN
-        )
+    # fetch associated transaction data
+    mongo_query = {
+        "accountId": {
+            "$eq": account_id
+        },
+        "reference": {
+            "$ne": "simulation"
+        }
+    }
+    projection = {}
+    sort = []
+    md_collection: Collection = context.bot_data['mongodb_account_collection']
+    log.debug(f'Fetching data from MongoDB collection...')
+    cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
+    messages = []
+    for tran in cursor:
+        tran_dc = tran['type']
+        if tran_dc == 'CREDIT':
+            tran_dc = '+'
+        else:
+            tran_dc = ''
+        tran_type = tran['type']
+        tran_desc: str = tran['description']
+        tran_desc = html.unescape(tran_desc)
+        tran_desc = tran_desc.replace('*'," ")
+        tran_date = tran['transactionDate']
+        tran_amnt = tran['amount']
+        tran_amnt = f'R{float(tran_amnt):.2f}'
+        messages.append(f'_{tran_date}_ `{tran_dc}{tran_amnt}` *{tran_desc}* _({tran_type})_')
+    await query.edit_message_text(
+        text='\n'.join(messages),
+        parse_mode=ParseMode.MARKDOWN
+    )
     return ConversationHandler.END
 
 
@@ -324,7 +314,7 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def home_currency(charge_cents: int, charge_currency: str):
     home_currency_code = app_config.get('app', 'home_currency_code')
-    currency_converter = zmq_socket(zmq.REQ)
+    currency_converter: Socket = zmq_socket(zmq.REQ, is_async=True)
     currency_converter.connect(addr=URL_WORKER_CURRENCY_CONVERTER)
     currency_query = {
         'function_path': 'latest',
@@ -334,8 +324,8 @@ async def home_currency(charge_cents: int, charge_currency: str):
             'amount': 1
         }
     }
-    currency_converter.send_pyobj(currency_query)
-    response = currency_converter.recv_pyobj()
+    await currency_converter.send_pyobj(currency_query)
+    response = await currency_converter.recv_pyobj()
     currency_converter.close()
     rate = response['rate']
     charge_cents_home_currency = rate * charge_cents
@@ -389,7 +379,7 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         }
     projection = {}
     sort = []
-    md_collection: Collection = context.bot_data['mongodb_collection']
+    md_collection: Collection = context.bot_data['mongodb_card_collection']
     log.debug(f'Fetching data from MongoDB collection...')
     cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
     costs = {}
@@ -642,7 +632,7 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
     chat_member: TelegramChatMember = await context.bot.get_chat_member(chat_id=update.user_id, user_id=update.user_id)
     telegram_user: TelegramUser = chat_member.user
     log.debug(f'Transaction for Telegram user ID {update.user_id}.')
-    log.debug(f'Transaction details {update.payload.keys()!s}.')
+    log.debug(f'Transaction details {update.payload!s}.')
     await context.bot.send_message(
         chat_id=update.user_id,
         text=f"{telegram_user.first_name}, {html.unescape(update.payload['merchant']['name'])}",
