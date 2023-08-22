@@ -1,5 +1,6 @@
 import emoji
 import html
+import re
 import requests
 import string
 import urllib
@@ -81,6 +82,10 @@ from .database import (
     get_cards,
     add_cards
 )
+
+
+def split_camel_case(s: str) -> str:
+    return re.sub('([A-Z][a-z]+)', r' \1', re.sub('([A-Z]+)', r' \1', s))
 
 
 async def validate(command_name: str, update: Update, validate_registration=True) -> Optional[User]:
@@ -262,21 +267,25 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     md_collection: Collection = context.bot_data['mongodb_account_collection']
     log.debug(f'Fetching data from MongoDB collection...')
     cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
-    messages = []
+
+    costs = {}
     for tran in cursor:
-        tran_dc = tran['type']
-        if tran_dc == 'CREDIT':
-            tran_dc = '+'
+        if tran['type'] == 'CREDIT':
+            continue
+        tran_amnt = float(tran['amount'])
+        tran_detail = tran['transactionType']
+        if tran_detail is None:
+            tran_detail: str = tran['description']
+            tran_detail = tran_detail.title()
         else:
-            tran_dc = ''
-        tran_type = tran['type']
-        tran_desc: str = tran['description']
-        tran_desc = html.unescape(tran_desc)
-        tran_desc = tran_desc.replace('*'," ")
-        tran_date = tran['transactionDate']
-        tran_amnt = tran['amount']
-        tran_amnt = f'R{float(tran_amnt):.2f}'
-        messages.append(f'_{tran_date}_ `{tran_dc}{tran_amnt}` *{tran_desc}* _({tran_type})_')
+            tran_detail = split_camel_case(s=tran_detail)
+        if tran_detail not in costs:
+            costs[tran_detail] = tran_amnt
+        else:
+            costs[tran_detail] += tran_amnt
+    messages = []
+    for tran_detail, tran_amnt in costs.items():
+        messages.append(f'`R{float(tran_amnt):.2f}` *{tran_detail}*')
     await query.edit_message_text(
         text='\n'.join(messages),
         parse_mode=ParseMode.MARKDOWN
