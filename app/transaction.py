@@ -12,7 +12,7 @@ from pylib.app import AppThread, Closable
 from pylib.handler import exception_handler
 from pylib.threads import shutting_down, interruptable_sleep
 
-from pymongo import MongoClient, InsertOne
+from pymongo import MongoClient, InsertOne, DESCENDING
 from pymongo.database import Database
 from pymongo.collection import Collection
 from pymongo.cursor import Cursor
@@ -91,8 +91,28 @@ class TransactionHistory(AppThread, Closable):
                         else:
                             log.info(f'Loaded {len(accounts)} accounts for Telegram user {user.telegram_user_id}.')
                         for account in accounts:
-                            log.info(f'Processing account ID {account.account_id} for Telegram user {user.telegram_user_id}...')
-                            response = client.get_account_transactions(account_id=account.account_id)
+                            # fetch latest persisted
+                            mongo_query = {
+                                "accountId": {
+                                    "$eq": account.account_id
+                                }
+                            }
+                            projection = {}
+                            sort = [
+                                ("postedOrder", DESCENDING)
+                            ]
+                            log.debug(f'Fetching data from MongoDB collection...')
+                            last_post: Optional[int] = None
+                            last_date: Optional[str] = None
+                            doc = self._mongodb_collection.find_one(mongo_query, projection=projection, sort=sort)
+                            if doc:
+                                account_id = doc['accountId']
+                                if account_id != account.account_id:
+                                    raise AssertionError(f'Expected account {account.account_id} from MongoDB but got {account_id}.')
+                                last_post = int(doc['postedOrder'])
+                                last_date = doc['postingDate']
+                            log.info(f'Last transaction for account ID {account.account_id} for Telegram user {user.telegram_user_id} is {last_date} (posted order {last_post}). Fetching since...')
+                            response = client.get_account_transactions(account_id=account.account_id, from_date=last_date)
                             log.debug(f'Accounts response: {response!s}')
                             if access_token is None or client.access_token != access_token[0]:
                                 log.debug(f'Persisting access token...')
@@ -102,38 +122,13 @@ class TransactionHistory(AppThread, Closable):
                                     access_token=client.access_token,
                                     access_token_expiry=client.access_token_expiry))
                             log.info(f'Fetched {len(response)} results from API. Collecting keys...')
-                            post_list = []
-                            for tran in response:
-                                account_id = tran['accountId']
-                                if account_id != account.account_id:
-                                    raise AssertionError(f'Expected account {account.account_id} from API but got {account_id}.')
-                                post_list.append(int(tran['postedOrder']))
-                            log.info(f'Account ID {account.account_id} has {len(post_list)} posted transactions.')
-                            # fetch associated transaction data
-                            mongo_query = {
-                                "accountId": {
-                                    "$eq": account.account_id
-                                },
-                                "postedOrder": {
-                                    "$in": post_list
-                                }
-                            }
-                            projection = {}
-                            sort = []
-                            log.debug(f'Fetching data from MongoDB collection...')
-                            cursor = self._mongodb_collection.find(mongo_query, projection=projection, sort=sort)
-                            post_list = []
-                            for doc in cursor:
-                                account_id = doc['accountId']
-                                if account_id != account.account_id:
-                                    raise AssertionError(f'Expected account {account.account_id} from MongoDB but got {account_id}.')
-                                post_list.append(int(doc['postedOrder']))
-                            log.info(f'MongoDB contains {len(post_list)} posted transactions for account ID {account.account_id}.')
                             updates: List = []
-                            post_set = set(post_list)
                             for tran in response:
-                                if int(tran['postedOrder']) not in post_set:
-                                    updates.append(tran)
+                                posted_order: int = int(tran['postedOrder'])
+                                if last_post and posted_order <= last_post:
+                                    log.debug(f'Skipping known transaction for account ID {account.account_id} with post order {posted_order}')
+                                    continue
+                                updates.append(tran)
                             if len(updates) > 0:
                                 log.info(f'Inserting {len(updates)} into MongoDB collection...')
                                 self._mongodb_collection.insert_many(updates)
