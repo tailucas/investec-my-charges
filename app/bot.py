@@ -92,6 +92,27 @@ def split_camel_case(s: str) -> str:
     return re.sub('([A-Z][a-z]+)', r' \1', re.sub('([A-Z]+)', r' \1', s))
 
 
+async def home_currency(charge_cents: int, charge_currency: str):
+    home_currency_code = app_config.get('app', 'home_currency_code')
+    currency_converter: Socket = zmq_socket(zmq.REQ, is_async=True)
+    currency_converter.connect(addr=URL_WORKER_CURRENCY_CONVERTER)
+    currency_query = {
+        'function_path': 'latest',
+        'params': {
+            'base': charge_currency,
+            'symbols': home_currency_code,
+            'amount': 1
+        }
+    }
+    await currency_converter.send_pyobj(currency_query)
+    response = await currency_converter.recv_pyobj()
+    currency_converter.close()
+    rate = response['rate']
+    charge_cents_home_currency = rate * charge_cents
+    log.debug(f'Converted {charge_cents}c {charge_currency} to {charge_cents_home_currency}c {home_currency_code} ({rate=})')
+    return charge_cents_home_currency
+
+
 async def validate(command_name: str, update: Update, validate_registration=True) -> Optional[User]:
     user: TelegramUser = update.effective_user
     if user.is_bot:
@@ -285,7 +306,7 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             user_keyboard.append([InlineKeyboardButton(card_label, callback_data=f'{ACTION_CARD_REPORT}:{card.card_id}')])
         user_keyboard.append(
             [
-                InlineKeyboardButton("All", callback_data=str(DEFAULT_ALL)),
+                InlineKeyboardButton("All", callback_data=f'{ACTION_CARD_REPORT}:{DEFAULT_ALL}'),
                 InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
             ]
         )
@@ -297,38 +318,15 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return ConversationHandler.END
 
 
-async def home_currency(charge_cents: int, charge_currency: str):
-    home_currency_code = app_config.get('app', 'home_currency_code')
-    currency_converter: Socket = zmq_socket(zmq.REQ, is_async=True)
-    currency_converter.connect(addr=URL_WORKER_CURRENCY_CONVERTER)
-    currency_query = {
-        'function_path': 'latest',
-        'params': {
-            'base': charge_currency,
-            'symbols': home_currency_code,
-            'amount': 1
-        }
-    }
-    await currency_converter.send_pyobj(currency_query)
-    response = await currency_converter.recv_pyobj()
-    currency_converter.close()
-    rate = response['rate']
-    charge_cents_home_currency = rate * charge_cents
-    log.debug(f'Converted {charge_cents}c {charge_currency} to {charge_cents_home_currency}c {home_currency_code} ({rate=})')
-    return charge_cents_home_currency
-
-
 async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     user: TelegramUser = update.effective_user
     db_user: User = await validate(command_name='card_report', update=update)
     query = update.callback_query
     # CallbackQueries need to be answered, even if no notification to the user is needed
     # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
     await query.answer()
-    await query.edit_message_text(
-        text=f'{emoji.emojize(":hourglass_not_done:")}',
-        parse_mode=ParseMode.MARKDOWN)
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    await query.edit_message_text(text=f'{emoji.emojize(":hourglass_not_done:")}', parse_mode=ParseMode.MARKDOWN)
 
     card_id = query.data.split(':')[1]
     log.debug(f'Telegram user {user.id} selects card ID {card_id}')
@@ -382,19 +380,21 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     log.debug(f'{i} transactions fetched.')
     to_plot = {'Merchant': [], 'Total': []}
+    total_charges: float = 0.0
     for merchant, amount_mind in costs.items():
         to_plot['Merchant'].append(merchant)
-        #amount_majd = amount_mind / 100.0
-        #amount_label = f'R{amount_majd:.2f}'
         to_plot['Total'].append(amount_mind)
-    await query.edit_message_text(
-        text=f'{i} charges.',
-        parse_mode=ParseMode.MARKDOWN
-    )
+        total_charges += amount_mind
+    # switch to major denomination
+    total_charges = total_charges / 100.0
+    #await query.edit_message_text(text=f'{i} charges.', parse_mode=ParseMode.MARKDOWN)
     df = pd.DataFrame(to_plot)
     fig = px.pie(df, values='Total', names='Merchant', title='Proportion of charges')
     img_bytes = fig.to_image(format="png")
-    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=img_bytes)
+    caption = f'{i} charges coming to a total of R{total_charges:.2f}.'
+    # remove the emoji
+    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.effective_message.id)
+    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=img_bytes, caption=caption)
     return ConversationHandler.END
 
 
