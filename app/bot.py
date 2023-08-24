@@ -26,6 +26,7 @@ from pylib.zmq import zmq_socket
 
 from telegram import (
     Update,
+    Message,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     User as TelegramUser,
@@ -61,6 +62,9 @@ ACTION_FORGET = 5
 ACTION_ACCOUNT_REPORT = 6
 ACTION_CARD_REPORT = 7
 ACTION_ACCOUNT_HISTORY = 8
+
+ACTION_ACCOUNT_DEBITS = 9
+ACTION_ACCOUNT_CREDITS = 10
 
 DEFAULT_TAG_UNTAGGED = '_untagged_'
 DEFAULT_ALL = '_all_'
@@ -125,89 +129,61 @@ async def validate(command_name: str, update: Update, validate_registration=True
     return db_user
 
 
-async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
     db_user: User = await validate(command_name='accounts', update=update)
     if db_user is None:
-        return
+        return ConversationHandler.END
     user: TelegramUser = update.effective_user
-    await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
     accounts: Optional[Sequence[Account]] = await get_accounts(telegram_user_id=user.id, user_id=db_user.id)
-    if accounts:
-        response_message = rf'{emoji.emojize(":ledger:")} Pick an account:'
-        user_keyboard = []
-        for account in accounts:
-            info = json.loads(account.account_info)
-            account_label = info['productName']
-            user_keyboard.append([InlineKeyboardButton(account_label, callback_data=f'{ACTION_ACCOUNT_REPORT}:{account.account_id}')])
-        user_keyboard.append(
-            [
-                InlineKeyboardButton("All", callback_data=str(DEFAULT_ALL)),
-                InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
-            ]
-        )
-        reply_markup = InlineKeyboardMarkup(user_keyboard)
-        await update.message.reply_html(
-            text=response_message,
-            reply_markup=reply_markup
-        )
-    return ConversationHandler.END
-
-
-async def account_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user: TelegramUser = update.effective_user
-    db_user: User = await validate(command_name='account_report', update=update)
-    query = update.callback_query
-    # CallbackQueries need to be answered, even if no notification to the user is needed
-    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
-    await query.answer()
-    await query.edit_message_text(
-        text=f'{emoji.emojize(":hourglass_not_done:")}',
-        parse_mode=ParseMode.MARKDOWN)
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
-
-    account_id = query.data.split(':')[1]
-    log.debug(f'Telegram user {user.id} selects account ID {account_id}')
-    # fetch associated transaction data
-    mongo_query = {
-        "accountId": {
-            "$eq": account_id
-        },
-        "reference": {
-            "$ne": "simulation"
+    if accounts is None:
+        return ConversationHandler.END
+    for account in accounts:
+        log.debug(f'Telegram user {user.id} selects account ID {account.account_id}')
+        # fetch associated transaction data
+        mongo_query = {
+            "accountId": {
+                "$eq": account.account_id
+            },
+            "reference": {
+                "$ne": "simulation"
+            }
         }
-    }
-    projection = {}
-    sort = []
-    md_collection: Collection = context.bot_data['mongodb_account_collection']
-    log.debug(f'Fetching data from MongoDB collection...')
-    cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
-    costs = {}
-    i=0
-    for doc in cursor:
-        tran_type = doc['type']
-        if tran_type == 'CREDIT':
-            continue
-        i+=1
-        description = html.unescape(doc['description'])
-        charge_home_currency = int(doc['amount'])
-        if description not in costs.keys():
-            costs[description] = charge_home_currency
-        else:
-            costs[description] += charge_home_currency
-    to_plot = {'Merchant': [], 'Total': []}
-    for merchant, amount_mind in costs.items():
-        to_plot['Merchant'].append(merchant)
-        #amount_majd = amount_mind / 100.0
-        #amount_label = f'R{amount_majd:.2f}'
-        to_plot['Total'].append(amount_mind)
-    await query.edit_message_text(
-        text=f'{i} debits:',
-        parse_mode=ParseMode.MARKDOWN
-    )
-    df = pd.DataFrame(to_plot)
-    fig = px.pie(df, values='Total', names='Merchant', title='Proportion of charges')
-    img_bytes = fig.to_image(format="png")
-    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=img_bytes)
+        projection = {}
+        sort = []
+        md_collection: Collection = context.bot_data['mongodb_account_collection']
+        log.debug(f'Fetching data from MongoDB collection...')
+        cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
+        costs = {}
+        i=0
+        total_debit: float = 0
+        for doc in cursor:
+            tran_type = doc['type']
+            if tran_type == 'CREDIT':
+                continue
+            i+=1
+            description = html.unescape(doc['description'])
+            charge_home_currency = float(doc['amount'])
+            total_debit += charge_home_currency
+            if description not in costs.keys():
+                costs[description] = charge_home_currency
+            else:
+                costs[description] += charge_home_currency
+        to_plot = {'Merchant': [], 'Total': []}
+        for merchant, amount_mind in costs.items():
+            to_plot['Merchant'].append(merchant)
+            to_plot['Total'].append(amount_mind)
+        # output totals
+        account_info = json.loads(account.account_info)
+        account_name = account_info['productName']
+        account_number = account_info['accountNumber']
+        log.debug(f'Generating graphic of account activity...')
+        df = pd.DataFrame(to_plot)
+        fig = px.pie(df, values='Total', names='Merchant', title=f'{account_name} debits.')
+        img_bytes = fig.to_image(format="png")
+        # FIXME currency symbol
+        caption = f'{account_name} ({account_number}) has {i} debits coming to a total of R{total_debit:.2f}.'
+        await update.message.reply_photo(photo=img_bytes, caption=caption)
     return ConversationHandler.END
 
 

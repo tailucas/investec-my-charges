@@ -65,7 +65,6 @@ from .bot import (
     forget,
     history,
     account_history,
-    account_report,
     card_report,
     start,
     show_profile,
@@ -81,7 +80,6 @@ from .bot import (
     ACTION_SHOW_PROFILE,
     ACTION_FORGET,
     ACTION_NONE,
-    ACTION_ACCOUNT_REPORT,
     ACTION_CARD_REPORT,
     ACTION_ACCOUNT_HISTORY
 )
@@ -140,7 +138,6 @@ def main():
             CommandHandler("start", start),
             CallbackQueryHandler(callback=forget, pattern="^" + str(ACTION_FORGET) + "$"),
             CallbackQueryHandler(callback=show_profile, pattern="^" + str(ACTION_SHOW_PROFILE) + "$"),
-            CallbackQueryHandler(callback=account_report, pattern=f'^{ACTION_ACCOUNT_REPORT}.*$'),
             CallbackQueryHandler(callback=account_history, pattern=f'^{ACTION_ACCOUNT_HISTORY}.*$'),
             CallbackQueryHandler(callback=card_report, pattern=f'^{ACTION_CARD_REPORT}.*$'),
             CallbackQueryHandler(callback=refresh, pattern="^" + str(ACTION_REFRESH_PROFILE) + "$"),
