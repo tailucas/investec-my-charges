@@ -3,6 +3,8 @@ import logging.handlers
 
 import asyncio
 import builtins
+import locale
+import os
 
 from typing import Optional
 
@@ -91,15 +93,21 @@ from .transaction import TransactionHistory
 
 def main():
     log.setLevel(logging.DEBUG)
+    locale.setlocale(locale.LC_ALL, os.environ['LC_ALL'])
+    conv=locale.localeconv()
+    int_curr_symbol = str(conv['int_curr_symbol']).rstrip()
+    currency_symbol = str(conv['currency_symbol'])
+    if int_curr_symbol is None or len(int_curr_symbol) == 0:
+        raise AssertionError('Locale settings are incomplete. Local currency configuration is not available.')
+    log.info(f'Locale is {locale.getlocale()} using currency symbols [{int_curr_symbol}] => [{currency_symbol}]')
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     md_conn: Optional[MongoClient] = None
-    currency_converter: Optional[CurrencyConverter] = None
     try:
         # Application threads
-        log.info('Starting currency converter...')
         currency_converter = CurrencyConverter(
-            home_currency=app_config.get('app', 'home_currency_code'))
+            int_curr_symbol=int_curr_symbol,
+            currency_symbol=currency_symbol)
         currency_converter.start()
         log.info('Starting local SQLite database...')
         loop.run_until_complete(db_startup())

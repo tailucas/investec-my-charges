@@ -1,5 +1,6 @@
 import emoji
 import html
+import locale
 import re
 import requests
 import string
@@ -8,6 +9,8 @@ import urllib
 import pandas as pd
 import plotly.express as px
 import simplejson as json
+
+from datetime import datetime
 
 from typing import Optional, Tuple, Sequence
 
@@ -22,7 +25,6 @@ from pylib import (
     log,
     threads
 )
-from pylib.zmq import zmq_socket
 
 from telegram import (
     Update,
@@ -44,9 +46,7 @@ from telegram.ext import (
 
 from investec_api_python import InvestecOpenApiClient
 from .event import TransactionUpdate, CustomContext
-import zmq
-from zmq.asyncio import Socket
-from .currency import URL_WORKER_CURRENCY_CONVERTER
+from .currency import local_currency
 
 
 # Reduce Sentry noise
@@ -90,27 +90,6 @@ from .database import (
 
 def split_camel_case(s: str) -> str:
     return re.sub('([A-Z][a-z]+)', r' \1', re.sub('([A-Z]+)', r' \1', s))
-
-
-async def home_currency(charge_cents: int, charge_currency: str):
-    home_currency_code = app_config.get('app', 'home_currency_code')
-    currency_converter: Socket = zmq_socket(zmq.REQ, is_async=True)
-    currency_converter.connect(addr=URL_WORKER_CURRENCY_CONVERTER)
-    currency_query = {
-        'function_path': 'latest',
-        'params': {
-            'base': charge_currency,
-            'symbols': home_currency_code,
-            'amount': 1
-        }
-    }
-    await currency_converter.send_pyobj(currency_query)
-    response = await currency_converter.recv_pyobj()
-    currency_converter.close()
-    rate = response['rate']
-    charge_cents_home_currency = rate * charge_cents
-    log.debug(f'Converted {charge_cents}c {charge_currency} to {charge_cents_home_currency}c {home_currency_code} ({rate=})')
-    return charge_cents_home_currency
 
 
 async def validate(command_name: str, update: Update, validate_registration=True) -> Optional[User]:
@@ -184,12 +163,12 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 continue
             i+=1
             description = html.unescape(doc['description'])
-            charge_home_currency = float(doc['amount'])
-            total_debit += charge_home_currency
+            charge_local_currency = float(doc['amount'])
+            total_debit += charge_local_currency
             if description not in costs.keys():
-                costs[description] = charge_home_currency
+                costs[description] = charge_local_currency
             else:
-                costs[description] += charge_home_currency
+                costs[description] += charge_local_currency
         to_plot = {'Merchant': [], 'Total': []}
         for merchant, amount_mind in costs.items():
             to_plot['Merchant'].append(merchant)
@@ -202,16 +181,15 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         df = pd.DataFrame(to_plot)
         fig = px.pie(df, values='Total', names='Merchant', title=f'{account_name} debits.')
         img_bytes = fig.to_image(format="png")
-        # FIXME currency symbol
-        caption = f'{account_name} ({account_number}) has {i} debits coming to a total of R{total_debit:.2f}.'
+        caption = f'{account_name} ({account_number}) has {i} debits coming to a total of {locale.currency(total_debit)}.'
         await update.message.reply_photo(photo=img_bytes, caption=caption)
     return ConversationHandler.END
 
 
-async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     db_user: User = await validate(command_name='history', update=update)
     if db_user is None:
-        return
+        return ConversationHandler.END
     user: TelegramUser = update.effective_user
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
     accounts: Optional[Sequence[Account]] = await get_accounts(telegram_user_id=user.id, user_id=db_user.id)
@@ -236,7 +214,7 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return ConversationHandler.END
 
 
-async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user: TelegramUser = update.effective_user
     db_user: User = await validate(command_name='account_history', update=update)
     query = update.callback_query
@@ -282,7 +260,7 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             costs[tran_detail] += tran_amnt
     messages = []
     for tran_detail, tran_amnt in costs.items():
-        messages.append(f'`R{float(tran_amnt):.2f}` *{tran_detail}*')
+        messages.append(f'`{locale.currency(tran_amnt)}` *{tran_detail}*')
     await query.edit_message_text(
         text='\n'.join(messages),
         parse_mode=ParseMode.MARKDOWN
@@ -290,10 +268,10 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return ConversationHandler.END
 
 
-async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     db_user: User = await validate(command_name='cards', update=update)
     if db_user is None:
-        return
+        return ConversationHandler.END
     user: TelegramUser = update.effective_user
     await context.bot.send_chat_action(chat_id=update.effective_message.chat_id, action=ChatAction.TYPING)
     cards: Optional[Sequence[Card]] = await get_cards(telegram_user_id=user.id, user_id=db_user.id)
@@ -318,7 +296,7 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return ConversationHandler.END
 
 
-async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     user: TelegramUser = update.effective_user
     db_user: User = await validate(command_name='card_report', update=update)
@@ -333,6 +311,7 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     account_numbers = []
     card_ids = []
+    card_names = []
     if card_id == DEFAULT_ALL:
         cards: Optional[Sequence[Card]] = await get_cards(telegram_user_id=user.id, user_id=db_user.id)
         if cards:
@@ -340,12 +319,14 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 info = json.loads(card.card_info)
                 account_numbers.append(info['AccountNumber'])
                 card_ids.append(str(card.card_id))
+                card_names.append(str(info['EmbossedName']).title())
     else:
         card: Optional[Card] = await get_card(telegram_user_id=user.id, user_id=db_user.id, card_id=int(card_id))
         if card:
             info = json.loads(card.card_info)
             account_numbers.append(info['AccountNumber'])
             card_ids.append(str(card.card_id))
+            card_names.append(str(info['EmbossedName']).title())
     log.debug(f'Running MongoDB query: {account_numbers=}, {card_ids=}')
     # fetch associated transaction data
     mongo_query = {
@@ -369,14 +350,15 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     i=0
     for doc in cursor:
         i+=1
-        charge_cents_home_currency = await home_currency(
+        charge_cents_local_currency = await local_currency(
             charge_cents=int(doc['centsAmount']),
-            charge_currency=str(doc['currencyCode']).upper())
+            charge_currency=str(doc['currencyCode']).upper(),
+            charge_date=str(doc['dateTime']).split('T')[0])
         merchant = doc['merchant']['name']
         if merchant not in costs.keys():
-            costs[merchant] = charge_cents_home_currency
+            costs[merchant] = charge_cents_local_currency
         else:
-            costs[merchant] += charge_cents_home_currency
+            costs[merchant] += charge_cents_local_currency
 
     log.debug(f'{i} transactions fetched.')
     to_plot = {'Merchant': [], 'Total': []}
@@ -389,23 +371,25 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     total_charges = total_charges / 100.0
     #await query.edit_message_text(text=f'{i} charges.', parse_mode=ParseMode.MARKDOWN)
     df = pd.DataFrame(to_plot)
-    fig = px.pie(df, values='Total', names='Merchant', title='Proportion of charges')
+    today = datetime.now()
+    card_labels = ','.join(sorted(card_names))
+    fig = px.pie(df, values='Total', names='Merchant', title=f'{today.strftime("%B %Y")} charges on {card_labels}')
     img_bytes = fig.to_image(format="png")
-    caption = f'{i} charges coming to a total of R{total_charges:.2f}.'
+    caption = f'{i} charges coming to a total of {locale.currency(total_charges)}.'
     # remove the emoji
     await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.effective_message.id)
     await context.bot.send_photo(chat_id=update.effective_chat.id, photo=img_bytes, caption=caption)
     return ConversationHandler.END
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     response_message = None
     reply_markup = None
     if update.message.chat.type == ChatType.PRIVATE:
         user: TelegramUser = update.effective_user
         db_user: User = await validate(command_name='start', update=update)
         if db_user is None:
-            return
+            return ConversationHandler.END
         elif db_user.telegram_user_id != user.id:
             raise AssertionError(f'Telegram user ID mismatch for {user.id}, got {db_user.telegram_user_id} instead.')
         access_token: Optional[Tuple] = await get_access_token(
@@ -439,7 +423,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return ConversationHandler.END
 
 
-async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user: TelegramUser = update.effective_user
     db_user: User = await validate(command_name='refresh', update=update)
     query = update.callback_query
@@ -489,7 +473,7 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return ConversationHandler.END
 
 
-async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user: TelegramUser = update.effective_user
     db_user: User = await validate(command_name='show_profile', update=update)
     query = update.callback_query
@@ -530,7 +514,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     return ConversationHandler.END
 
 
-async def forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user: TelegramUser = update.effective_user
     db_user: User = await validate(command_name='forget', update=update)
     query = update.callback_query
@@ -550,7 +534,7 @@ async def forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     return ConversationHandler.END
 
 
-async def registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user: TelegramUser = update.effective_user
     await validate(command_name='registration', update=update, validate_registration=False)
     query = update.callback_query
@@ -576,11 +560,11 @@ async def registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     return ConversationHandler.END
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user: TelegramUser = update.effective_user
     db_user: User = await validate(command_name='help', update=update)
     if db_user is None:
-        return
+        return ConversationHandler.END
     help_url = app_config.get('telegram', 'help_url')
     message = rf'{emoji.emojize(":light_bulb:")} {user.first_name}, the documentation is [here]({help_url}).'
     await update.message.reply_text(
@@ -592,22 +576,22 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     return ConversationHandler.END
 
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     log.info(f'Incoming message from Telegram user ID {update.effective_user.id}.')
     await update.message.reply_text(update.message.text)
     return ConversationHandler.END
 
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     # CallbackQueries need to be answered, even if no notification to the user is needed
     # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
     await query.answer()
-    await query.edit_message_text(text=f"OK")
+    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.effective_message.id)
     return ConversationHandler.END
 
 
-async def telegram_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def telegram_error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     log.warning(msg="Bot error:", exc_info=context.error)
     return ConversationHandler.END
 

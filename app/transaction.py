@@ -39,11 +39,10 @@ from investec_api_python import InvestecOpenApiClient
 URL_WORKER_TRANSACTION_HISTORY = 'inproc://transaction-history'
 
 
-class TransactionHistory(AppThread, Closable):
+class TransactionHistory(AppThread):
 
         def __init__(self, mongodb_collection: Collection, sync_interval: int):
             AppThread.__init__(self, name=self.__class__.__name__)
-            Closable.__init__(self, connect_url=URL_WORKER_TRANSACTION_HISTORY, socket_type=zmq.REP, do_connect=False)
             self._mongodb_collection: Collection = mongodb_collection
             self._last_sync: Optional[int] = None
             self._sync_interval_secs: int = sync_interval
@@ -51,7 +50,11 @@ class TransactionHistory(AppThread, Closable):
         def run(self):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            with exception_handler(closable=self, and_raise=False, close_on_exit=True) as zmq_socket:
+            with exception_handler(
+                connect_url=URL_WORKER_TRANSACTION_HISTORY,
+                socket_type=zmq.REP,
+                and_raise=False,
+                shutdown_on_error=True) as zmq_socket:
                 while not shutting_down:
                     trigger = None
                     try:

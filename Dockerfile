@@ -1,6 +1,18 @@
-FROM tailucas/base-app:20230821_2
+FROM tailucas/base-app:20230825
 # for system/site packages
 USER root
+# generate correct locales
+ARG LANG
+ENV LANG=$LANG
+ARG LANGUAGE
+ENV LANGUAGE=$LANGUAGE
+ARG LC_ALL
+ENV LC_ALL=$LC_ALL
+ARG ENCODING
+ENV ENCODING=$ENCODING
+RUN sed -i -e "s/# ${LANG} ${ENCODING}/${LANG} ${ENCODING}/" /etc/locale.gen && \
+    dpkg-reconfigure --frontend=noninteractive locales && \
+    update-locale LANG=${LANG} && locale
 # system setup
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
