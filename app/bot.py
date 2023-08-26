@@ -141,13 +141,18 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     for account in accounts:
         log.debug(f'Telegram user {user.id} selects account ID {account.account_id}')
         # fetch associated transaction data
+        reference = {
+            "$ne": "simulation"
+        }
+        if app_config.getboolean('app', 'demo_mode'):
+            reference = {
+                "$eq": "simulation"
+            }
         mongo_query = {
             "accountId": {
                 "$eq": account.account_id
             },
-            "reference": {
-                "$ne": "simulation"
-            }
+            "reference": reference
         }
         projection = {}
         sort = []
@@ -229,13 +234,18 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     account_id = query.data.split(':')[1]
     log.debug(f'Telegram user {user.id} selects account ID {account_id}')
     # fetch associated transaction data
+    reference = {
+        "$ne": "simulation"
+    }
+    if app_config.getboolean('app', 'demo_mode'):
+        reference = {
+            "$eq": "simulation"
+        }
     mongo_query = {
         "accountId": {
             "$eq": account_id
         },
-        "reference": {
-            "$ne": "simulation"
-        }
+        "reference": reference
     }
     projection = {}
     sort = []
@@ -329,6 +339,13 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             card_names.append(str(info['EmbossedName']).title())
     log.debug(f'Running MongoDB query: {account_numbers=}, {card_ids=}')
     # fetch associated transaction data
+    reference = {
+        "$ne": "simulation"
+    }
+    if app_config.getboolean('app', 'demo_mode'):
+        reference = {
+            "$eq": "simulation"
+        }
     mongo_query = {
         "accountNumber": {
             "$in": account_numbers
@@ -337,10 +354,8 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             "$in": card_ids
         },
         "type": "card",
-        "reference": {
-                "$ne": "simulation"
-            }
-        }
+        "reference": reference
+    }
     projection = {}
     sort = []
     md_collection: Collection = context.bot_data['mongodb_card_collection']
