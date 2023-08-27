@@ -349,7 +349,6 @@ async def card_report_interval(update: Update, context: ContextTypes.DEFAULT_TYP
     # CallbackQueries need to be answered, even if no notification to the user is needed
     # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
     await query.answer()
-    await query.edit_message_text(text=f'{emoji.emojize(":hourglass_not_done:")}', parse_mode=ParseMode.MARKDOWN)
     card_id = query.data.split(':')[1]
     log.debug(f'Telegram user {user.id} selects card ID {card_id}')
     billing_cycle_day: int = app_config.getint('app', 'default_bill_cycle_day_of_month')
@@ -431,6 +430,9 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             "$in": card_ids
         },
         "type": "card",
+        "dateTime": {
+            "$gte": start_date
+        },
         "reference": reference
     }
     projection = {}
@@ -461,11 +463,9 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         total_charges += amount_mind
     # switch to major denomination
     total_charges = total_charges / 100.0
-    #await query.edit_message_text(text=f'{i} charges.', parse_mode=ParseMode.MARKDOWN)
     df = pd.DataFrame(to_plot)
-    today = datetime.now()
     card_labels = ','.join(sorted(card_names))
-    fig = px.pie(df, values='Total', names='Merchant', title=f'{today.strftime("%B %Y")} charges on {card_labels}')
+    fig = px.pie(df, values='Total', names='Merchant', title=f'Charges on {card_labels} since {date.strftime("%d %B %Y")}')
     img_bytes = fig.to_image(format="png")
     caption = f'{i} charges coming to a total of {locale.currency(total_charges)}.'
     # remove the emoji
