@@ -10,7 +10,8 @@ import pandas as pd
 import plotly.express as px
 import simplejson as json
 
-from datetime import datetime
+from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 
 from typing import Optional, Tuple, Sequence
 
@@ -104,6 +105,22 @@ from .database import (
     get_cards,
     add_cards
 )
+
+
+def get_datetime_a_month_ago() -> datetime:
+    now = datetime.now()
+    a_month_ago = now - relativedelta(months=1)
+    return a_month_ago
+
+
+def get_last_of_day(day: int) -> datetime:
+    now = datetime.now()
+    if now.day >= day:
+        this_month = now.replace(day=day)
+        return this_month
+    else:
+        previous_month = (now - relativedelta(months=1)).replace(day=day)
+        return previous_month
 
 
 def split_camel_case(s: str) -> str:
@@ -368,8 +385,16 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     await query.answer()
     await query.edit_message_text(text=f'{emoji.emojize(":hourglass_not_done:")}', parse_mode=ParseMode.MARKDOWN)
 
-    card_id = query.data.split(':')[1]
-    log.debug(f'Telegram user {user.id} selects card ID {card_id}')
+    callback_data = query.data.split(':')
+    card_id = callback_data[1]
+    interval = callback_data[2]
+    date = None
+    if interval == DEFAULT_INTERVAL:
+        date = get_datetime_a_month_ago()
+    else:
+        date = get_last_of_day(day=int(interval))
+    start_date = date.strftime('%Y-%m-%d')
+    log.debug(f'Telegram user {user.id} selects card ID {card_id} with interval {interval} ({start_date})')
 
     account_numbers = []
     card_ids = []

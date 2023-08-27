@@ -26,6 +26,7 @@ plotly = "^5.15.0"
 pandas = "^2.0.3"
 kaleido = "0.2.1"
 lets-plot = "^4.0.0"
+python-dateutil = "^2.8.2"
 
 [tool.poetry.group.dev.dependencies]
 pylib = {path = "pylib"}
