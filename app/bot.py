@@ -55,19 +55,34 @@ ignore_logger('telegram.ext._updater')
 ACTION_SETTINGS_PREFIX = "settings"
 
 ACTION_NONE = 0
+ACTION_SETTINGS = 1
 ACTION_AUTHORIZE = 2
 ACTION_REFRESH_PROFILE = 3
 ACTION_SHOW_PROFILE = 4
 ACTION_FORGET = 5
 ACTION_ACCOUNT_REPORT = 6
 ACTION_CARD_REPORT = 7
+ACTION_CARD_REPORT_INTERVAL = 25
 ACTION_ACCOUNT_HISTORY = 8
 
 ACTION_ACCOUNT_DEBITS = 9
 ACTION_ACCOUNT_CREDITS = 10
 
+ACTION_SETTINGS_ACCOUNT_DATE = 15
+ACTION_SETTINGS_CARD_DATE = 16
+
+ACTION_SETTINGS_PAY_DAY = 20
+ACTION_SETTINGS_BILL_CYCLE_DAY = 21
+ACTION_SETTINGS_BILL_CYCLE_DAY_ASK = 24
+
+ACTION_SETTINGS_UPDATE = 22
+
 DEFAULT_TAG_UNTAGGED = '_untagged_'
 DEFAULT_ALL = '_all_'
+DEFAULT_INTERVAL = '_month_'
+
+USER_DATA_KEY_PAY_DAY = 'save_pay_day'
+USER_DATA_KEY_BILL_CYCLE_DAY = 'save_bill_cycle_day'
 
 from .influx import influxdb
 
@@ -75,6 +90,7 @@ from .database import (
     Account,
     Card,
     User,
+    UserSetting,
     get_access_token,
     update_access_token,
     get_user,
@@ -82,6 +98,8 @@ from .database import (
     get_account,
     get_accounts,
     add_accounts,
+    get_user_setting,
+    add_user_setting,
     get_card,
     get_cards,
     add_cards
@@ -291,10 +309,10 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         for card in cards:
             info = json.loads(card.card_info)
             card_label = info['EmbossedName']
-            user_keyboard.append([InlineKeyboardButton(card_label, callback_data=f'{ACTION_CARD_REPORT}:{card.card_id}')])
+            user_keyboard.append([InlineKeyboardButton(card_label, callback_data=f'{ACTION_CARD_REPORT_INTERVAL}:{card.card_id}')])
         user_keyboard.append(
             [
-                InlineKeyboardButton("All", callback_data=f'{ACTION_CARD_REPORT}:{DEFAULT_ALL}'),
+                InlineKeyboardButton("All", callback_data=f'{ACTION_CARD_REPORT_INTERVAL}:{DEFAULT_ALL}'),
                 InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
             ]
         )
@@ -303,6 +321,40 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             text=response_message,
             reply_markup=reply_markup
         )
+    return ConversationHandler.END
+
+
+async def card_report_interval(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+    user: TelegramUser = update.effective_user
+    db_user: User = await validate(command_name='card_report', update=update)
+    query = update.callback_query
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    await query.edit_message_text(text=f'{emoji.emojize(":hourglass_not_done:")}', parse_mode=ParseMode.MARKDOWN)
+    card_id = query.data.split(':')[1]
+    log.debug(f'Telegram user {user.id} selects card ID {card_id}')
+    billing_cycle_day: int = app_config.getint('app', 'default_bill_cycle_day_of_month')
+    db_user_setting: UserSetting = await get_user_setting(user_id=db_user.id)
+    if db_user_setting is not None and db_user_setting.bill_cycle_day_of_month is not None:
+        billing_cycle_day: int = db_user_setting.bill_cycle_day_of_month
+    response_message = rf'{emoji.emojize(":spiral_calendar:")} Pick a report interval:'
+    user_keyboard = [
+        [
+            InlineKeyboardButton("Billing Cycle", callback_data=f'{ACTION_CARD_REPORT}:{card_id}:{billing_cycle_day}'),
+            InlineKeyboardButton("Calendar Month", callback_data=f'{ACTION_CARD_REPORT}:{card_id}:{DEFAULT_INTERVAL}'),
+        ],
+        [
+            InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(user_keyboard)
+    await query.edit_message_text(
+        text=response_message,
+        parse_mode=ParseMode.HTML,
+        reply_markup=reply_markup
+    )
     return ConversationHandler.END
 
 
@@ -575,6 +627,128 @@ async def registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     return ConversationHandler.END
 
 
+async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    response_message = None
+    reply_markup = None
+    if update.message.chat.type == ChatType.PRIVATE:
+        user: TelegramUser = update.effective_user
+        db_user: User = await validate(command_name='settings', update=update)
+        if db_user is None:
+            return ConversationHandler.END
+        db_user_setting: UserSetting = await get_user_setting(user_id=db_user.id)
+        note_default = ''
+        if db_user_setting is None:
+            pay_day = app_config.getint('app', 'default_pay_day_of_month')
+            billing_cycle_day = app_config.getint('app', 'default_bill_cycle_day_of_month')
+            note_default = ' (default settings)'
+        else:
+            pay_day = db_user_setting.pay_day_of_month
+            billing_cycle_day = db_user_setting.bill_cycle_day_of_month
+        response_message = rf'<tg-emoji emoji-id="1">{emoji.emojize(":gear:")}</tg-emoji> ' \
+            f'{user.first_name}, pay day is on day {pay_day} of the month and billing cycle ends on day {billing_cycle_day}{note_default}.'
+        user_keyboard = [
+            [
+                InlineKeyboardButton("Set Pay Day", callback_data=ACTION_SETTINGS_PAY_DAY),
+                InlineKeyboardButton("Set Billing Cycle Day", callback_data=ACTION_SETTINGS_BILL_CYCLE_DAY)
+            ],
+            [
+                InlineKeyboardButton("Cancel", callback_data=f'{ACTION_NONE}:No changes made.')
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(user_keyboard)
+    else:
+        response_message = rf'<tg-emoji emoji-id="1">{emoji.emojize(":gear:")}</tg-emoji> This does not work in group conversations, only in private chat.'
+    await update.message.reply_html(
+        text=response_message,
+        reply_markup=reply_markup
+    )
+    return ACTION_SETTINGS_UPDATE
+
+
+async def askpayday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user: TelegramUser = update.effective_user
+    log.info(f'Asking Telegram user {user.id} for pay day preference...')
+    query = update.callback_query
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    valid_min = 1
+    valid_max = 28
+    valid_response = f'a number between {valid_min} and {valid_max} (inclusive)'
+    context.user_data[USER_DATA_KEY_PAY_DAY] = {'min': valid_min, 'max': valid_max, 'response': valid_response}
+    if USER_DATA_KEY_BILL_CYCLE_DAY in context.user_data.keys():
+        del context.user_data[USER_DATA_KEY_BILL_CYCLE_DAY]
+    await query.edit_message_text(
+        text=f'{emoji.emojize(":calendar:")} Enter {valid_response} to represent the day of the month for *pay day*.',
+        parse_mode=ParseMode.MARKDOWN)
+    return ACTION_SETTINGS_UPDATE
+
+
+async def askbillcycleday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user: TelegramUser = update.effective_user
+    log.info(f'Asking Telegram user {user.id} for billing cycle day preference...')
+    query = update.callback_query
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    valid_min = 1
+    valid_max = 28
+    valid_response = f'a number between {valid_min} and {valid_max} (inclusive)'
+    context.user_data[USER_DATA_KEY_BILL_CYCLE_DAY] = {'min': valid_min, 'max': valid_max, 'response': valid_response}
+    if USER_DATA_KEY_PAY_DAY in context.user_data.keys():
+        del context.user_data[USER_DATA_KEY_PAY_DAY]
+    await query.edit_message_text(
+        text=f'{emoji.emojize(":calendar:")} Enter {valid_response} to represent the day of the month when the *billing cycle* is complete.',
+        parse_mode=ParseMode.MARKDOWN)
+    return ACTION_SETTINGS_UPDATE
+
+
+async def update_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user: TelegramUser = update.effective_user
+    db_user: User = await validate(command_name='update_settings', update=update)
+    if db_user is None:
+        return ConversationHandler.END
+    log.debug(f'{update.callback_query=} with {context.user_data=}')
+    save_pay_day = None
+    if USER_DATA_KEY_PAY_DAY in context.user_data.keys():
+        save_pay_day = context.user_data[USER_DATA_KEY_PAY_DAY]
+    save_billing_cycle_day = None
+    if USER_DATA_KEY_BILL_CYCLE_DAY in context.user_data.keys():
+        save_billing_cycle_day = context.user_data[USER_DATA_KEY_BILL_CYCLE_DAY]
+    valid_response = None
+    valid_min: int = None
+    valid_max: int = None
+    if save_pay_day:
+        valid_min = save_pay_day['min']
+        valid_max = save_pay_day['max']
+        valid_response = save_pay_day['response']
+    elif save_billing_cycle_day:
+        valid_min = save_billing_cycle_day['min']
+        valid_max = save_billing_cycle_day['max']
+        valid_response = save_billing_cycle_day['response']
+    feedback: str = update.message.text
+    valid_feedback = True
+    day: int = None
+    try:
+        day = int(feedback)
+    except ValueError:
+        valid_feedback = False
+    if not valid_feedback or day < valid_min or day > valid_max:
+        await update.message.reply_markdown(
+            text=f'Sorry, send *{valid_response}*.',
+            reply_to_message_id=update.message.id)
+        return ACTION_SETTINGS_UPDATE
+    else:
+        if save_pay_day:
+            await add_user_setting(user_id=db_user.id, pay_day_of_month=day)
+            del context.user_data[USER_DATA_KEY_PAY_DAY]
+        elif save_billing_cycle_day:
+            await add_user_setting(user_id=db_user.id, bill_cycle_day_of_month=day)
+            del context.user_data[USER_DATA_KEY_BILL_CYCLE_DAY]
+    await update.message.reply_text(f'Settings updated.')
+    return ConversationHandler.END
+
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user: TelegramUser = update.effective_user
     db_user: User = await validate(command_name='help', update=update)
@@ -602,7 +776,14 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # CallbackQueries need to be answered, even if no notification to the user is needed
     # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
     await query.answer()
-    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.effective_message.id)
+    backchat = None
+    feedback = query.data.split(':')
+    if len(feedback) > 1:
+        backchat = feedback[1]
+    if backchat is None:
+        await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.effective_message.id)
+    else:
+        await context.bot.edit_message_text(text=backchat, chat_id=update.effective_chat.id, message_id=update.effective_message.id)
     return ConversationHandler.END
 
 

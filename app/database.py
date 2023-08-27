@@ -42,6 +42,14 @@ class DbUser(Base):
     investec_credentials_digest = Column(String(96), index=True)
 
 
+class DbUserSetting(Base):
+    __tablename__ = 'user_setting'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('user.id'), index=True)
+    pay_day_of_month = Column(Integer)
+    bill_cycle_day_of_month = Column(Integer)
+
+
 class DbAccessToken(Base):
     __tablename__ = 'access_token'
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -85,6 +93,12 @@ class User:
         self.investec_client_id_digest: str = db.investec_client_id_digest
         self.investec_credentials: str = decrypt(header=str(telegram_user_id), payload=str(db.investec_credentials))
         self.investec_credentials_digest: str = db.investec_credentials_digest
+
+
+class UserSetting:
+    def __init__(self, db: DbUserSetting) -> None:
+        self.pay_day_of_month: int = db.pay_day_of_month
+        self.bill_cycle_day_of_month: int = db.bill_cycle_day_of_month
 
 
 class AccessToken:
@@ -142,6 +156,10 @@ class AppDB:
 
     async def _get_db_user(self, telegram_user_id: int) -> Optional[DbUser]:
         r: Result = await self.db_session.execute(select(DbUser).where(DbUser.telegram_user_id==telegram_user_id))
+        return r.scalars().one_or_none()
+
+    async def _get_db_user_setting(self, user_id: int) -> Optional[DbUserSetting]:
+        r: Result = await self.db_session.execute(select(DbUserSetting).where(DbUserSetting.user_id==user_id))
         return r.scalars().one_or_none()
 
     async def _get_db_user_from_card(self, card_id: int) -> Optional[DbUser]:
@@ -212,6 +230,29 @@ class AppDB:
         if db is None:
             return None
         return User(telegram_user_id=db.telegram_user_id, db=db)
+
+    async def add_user_setting(self, user_id: int, pay_day_of_month: Optional[int]=None, bill_cycle_day_of_month: Optional[int]=None) -> None:
+        log.debug(f'Saving settings for DB user {user_id}')
+        db_settings = await self._get_db_user_setting(user_id=user_id)
+        if db_settings is None:
+            db_settings = DbUserSetting(
+                user_id=user_id,
+                pay_day_of_month=pay_day_of_month,
+                bill_cycle_day_of_month=bill_cycle_day_of_month)
+        else:
+            if pay_day_of_month:
+                db_settings.pay_day_of_month = pay_day_of_month
+            if bill_cycle_day_of_month:
+                db_settings.bill_cycle_day_of_month = bill_cycle_day_of_month
+        self.db_session.add(db_settings)
+        await self.db_session.flush()
+
+    async def get_user_setting(self, user_id: int) -> Optional[UserSetting]:
+        log.debug(f'Fetching settings for DB user {user_id}')
+        db = await self._get_db_user_setting(user_id=user_id)
+        if db is None:
+            return None
+        return UserSetting(db=db)
 
     async def get_access_token(self, telegram_user_id: int, user_id: int) -> Optional[Tuple[str, datetime]]:
         log.debug(f'Fetching access token for Telegram user {telegram_user_id} (DB user {user_id}).')
@@ -337,6 +378,21 @@ async def get_user_from_card(card_id: int) -> Optional[User]:
         async with session.begin():
             db = AppDB(session)
             return await db.get_user_from_card(card_id=card_id)
+
+async def add_user_setting(user_id: int, pay_day_of_month: Optional[int]=None, bill_cycle_day_of_month: Optional[int]=None) -> None:
+    async with async_session() as session:
+        async with session.begin():
+            db = AppDB(session)
+            return await db.add_user_setting(
+                user_id=user_id,
+                pay_day_of_month=pay_day_of_month,
+                bill_cycle_day_of_month=bill_cycle_day_of_month)
+
+async def get_user_setting(user_id: int) -> Optional[UserSetting]:
+    async with async_session() as session:
+        async with session.begin():
+            db = AppDB(session)
+            return await db.get_user_setting(user_id=user_id)
 
 async def get_access_token(telegram_user_id: int, user_id: int) -> Optional[Tuple[str, datetime]]:
     async with async_session() as session:

@@ -49,6 +49,7 @@ from pymongo.cursor import Cursor
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
+    ConversationHandler,
     CommandHandler,
     MessageHandler,
     TypeHandler,
@@ -68,7 +69,12 @@ from .bot import (
     history,
     account_history,
     card_report,
+    card_report_interval,
     start,
+    settings,
+    update_settings,
+    askpayday,
+    askbillcycleday,
     show_profile,
     refresh,
     registration,
@@ -82,8 +88,16 @@ from .bot import (
     ACTION_SHOW_PROFILE,
     ACTION_FORGET,
     ACTION_NONE,
+    ACTION_SETTINGS,
     ACTION_CARD_REPORT,
-    ACTION_ACCOUNT_HISTORY
+    ACTION_ACCOUNT_HISTORY,
+    ACTION_SETTINGS_ACCOUNT_DATE,
+    ACTION_SETTINGS_CARD_DATE,
+    ACTION_SETTINGS_PAY_DAY,
+    ACTION_SETTINGS_BILL_CYCLE_DAY,
+    ACTION_SETTINGS_BILL_CYCLE_DAY_ASK,
+    ACTION_SETTINGS_UPDATE,
+    ACTION_CARD_REPORT_INTERVAL,
 )
 
 from .currency import CurrencyConverter
@@ -148,10 +162,22 @@ def main():
             CallbackQueryHandler(callback=show_profile, pattern="^" + str(ACTION_SHOW_PROFILE) + "$"),
             CallbackQueryHandler(callback=account_history, pattern=f'^{ACTION_ACCOUNT_HISTORY}.*$'),
             CallbackQueryHandler(callback=card_report, pattern=f'^{ACTION_CARD_REPORT}.*$'),
+            CallbackQueryHandler(callback=card_report_interval, pattern=f'^{ACTION_CARD_REPORT_INTERVAL}.*$'),
             CallbackQueryHandler(callback=refresh, pattern="^" + str(ACTION_REFRESH_PROFILE) + "$"),
             CallbackQueryHandler(callback=registration, pattern="^" + str(ACTION_AUTHORIZE) + "$"),
-            CallbackQueryHandler(callback=cancel, pattern="^" + str(ACTION_NONE) + "$"),
+            CallbackQueryHandler(callback=askpayday, pattern="^" + str(ACTION_SETTINGS_PAY_DAY) + "$"),
+            CallbackQueryHandler(callback=askbillcycleday, pattern="^" + str(ACTION_SETTINGS_BILL_CYCLE_DAY) + "$"),
+            CallbackQueryHandler(callback=cancel, pattern=f'^{ACTION_NONE}.*$'),
         ]
+        settings_handler = ConversationHandler(
+            allow_reentry=True,
+            entry_points=[CommandHandler("settings", settings)],
+            states={
+                ACTION_SETTINGS_UPDATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, update_settings)],
+            },
+            fallbacks=command_handlers
+        )
+        application.add_handler(settings_handler)
         for handler in command_handlers:
             application.add_handler(handler)
         # on non command i.e message - echo the message on Telegram
