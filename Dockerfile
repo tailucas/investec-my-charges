@@ -1,4 +1,4 @@
-FROM tailucas/base-app:20230825
+FROM tailucas/base-app:20230831
 # for system/site packages
 USER root
 # generate correct locales
@@ -25,10 +25,6 @@ RUN rm -f ./config/cron/base_job
 COPY config/cron/backup_db ./config/cron/
 # apply override
 RUN /opt/app/app_setup.sh
-# submodule tools (use poetry develop=true)
-COPY investec-api-python/ ./investec-api-python/
-# refresh pylib from base
-COPY pylib/ ./pylib/
 # switch to user
 USER app
 # override configuration

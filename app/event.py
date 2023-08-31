@@ -5,17 +5,17 @@ from asyncio.events import AbstractEventLoop
 from botocore.exceptions import EndpointConnectionError as bcece
 from dataclasses import dataclass
 
-from pylib import (
+from tailucas_pylib import (
     app_config,
     creds,
     log
 )
 
-from pylib.app import AppThread
-from pylib.aws import boto3_session
-from pylib.handler import exception_handler
-from pylib.threads import bye, die, shutting_down, interruptable_sleep
-from pylib.zmq import zmq_term, zmq_socket
+from tailucas_pylib.app import AppThread
+from tailucas_pylib.aws import boto3_session
+from tailucas_pylib.handler import exception_handler
+from tailucas_pylib.threads import bye, die, shutting_down, interruptable_sleep
+from tailucas_pylib.zmq import zmq_term, zmq_socket
 
 
 from telegram.ext import (

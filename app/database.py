@@ -6,7 +6,7 @@ from asyncio import AbstractEventLoop
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple, Optional, Sequence
 
-from pylib import (
+from tailucas_pylib import (
     app_config,
     log
 )

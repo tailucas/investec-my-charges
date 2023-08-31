@@ -7,10 +7,10 @@ import zmq
 from typing import Dict, Optional, Tuple, Sequence, List
 from zmq.error import ZMQError, ContextTerminated, Again
 
-from pylib import log
-from pylib.app import AppThread, Closable
-from pylib.handler import exception_handler
-from pylib.threads import shutting_down, interruptable_sleep
+from tailucas_pylib import log
+from tailucas_pylib.app import AppThread, Closable
+from tailucas_pylib.handler import exception_handler
+from tailucas_pylib.threads import shutting_down, interruptable_sleep
 
 from pymongo import MongoClient, InsertOne, DESCENDING
 from pymongo.database import Database

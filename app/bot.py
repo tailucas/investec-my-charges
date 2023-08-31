@@ -20,7 +20,7 @@ from pymongo.cursor import Cursor
 
 from sentry_sdk.integrations.logging import ignore_logger
 
-from pylib import (
+from tailucas_pylib import (
     app_config,
     creds,
     log,

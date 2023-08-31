@@ -2,9 +2,9 @@ import requests
 
 from typing import Dict, Optional, Tuple
 
-from pylib import app_config, log
-from pylib.app import ZmqWorker
-from pylib.zmq import zmq_socket
+from tailucas_pylib import app_config, log
+from tailucas_pylib.app import ZmqWorker
+from tailucas_pylib.zmq import zmq_socket
 
 import zmq
 from zmq.asyncio import Socket

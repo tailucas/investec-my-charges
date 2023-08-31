@@ -32,14 +32,14 @@ class CredsConfig:
 # instantiate class
 builtins.creds_config = CredsConfig()
 
-from pylib import (
+from tailucas_pylib import (
     app_config,
     creds,
     log
 )
 
-from pylib.threads import bye, die
-from pylib.zmq import zmq_term
+from tailucas_pylib.threads import bye, die
+from tailucas_pylib.zmq import zmq_term
 
 from pymongo import MongoClient
 from pymongo.database import Database
