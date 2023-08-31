@@ -66,35 +66,34 @@ class SQSEvent(AppThread):
         log.info(f'Creating SQS client for queue {sqs_queue_name}')
         sqs = boto3_session.client('sqs')
         sqs_queue_url = app_config.get('aws', 'sqs_queue_url')
-        with exception_handler():
-            while not shutting_down:
-                try:
-                    # Take the messages off the queue
-                    response = sqs.receive_message(
-                        QueueUrl=sqs_queue_url,
-                        AttributeNames=['All'],
-                        MaxNumberOfMessages=10,
-                        MessageAttributeNames=['All'],
-                        VisibilityTimeout=30,
-                        WaitTimeSeconds=10
-                    )
-                    if 'Messages' in response.keys():
-                        for message in response['Messages']:
-                            m = json.loads(message['Body'])
-                            log.info(f"{m['id']} {m['detail-type']} from {m['source']}")
-                            doc = m['detail']['fullDocument']
-                            account_number = doc['accountNumber']
-                            card_id = int(doc['card']['id'])
-                            log.debug(f'Transaction on card {card_id} to account {account_number}.')
-                            db: User = asyncio.run(get_user_from_card(card_id=card_id))
-                            log.debug(f'Card {card_id} belongs to Telegram user {db.telegram_user_id}')
-                            # ensure that the event is on the application queue
-                            if db:
-                                asyncio.run(self.create_event(telegram_user_id=db.telegram_user_id, payload=doc))
-                            message_handle = message['ReceiptHandle']
-                            log.debug(f'Removing message {message_handle} from queue.')
-                            # remove the message from the queue
-                            sqs.delete_message(QueueUrl=sqs_queue_url, ReceiptHandle=message_handle)
-                except bcece:
-                    log.warning(f'SQS', exc_info=True)
-                    interruptable_sleep.wait(10)
+        while not shutting_down:
+            try:
+                # Take the messages off the queue
+                response = sqs.receive_message(
+                    QueueUrl=sqs_queue_url,
+                    AttributeNames=['All'],
+                    MaxNumberOfMessages=10,
+                    MessageAttributeNames=['All'],
+                    VisibilityTimeout=30,
+                    WaitTimeSeconds=10
+                )
+                if 'Messages' in response.keys():
+                    for message in response['Messages']:
+                        m = json.loads(message['Body'])
+                        log.info(f"{m['id']} {m['detail-type']} from {m['source']}")
+                        doc = m['detail']['fullDocument']
+                        account_number = doc['accountNumber']
+                        card_id = int(doc['card']['id'])
+                        log.debug(f'Transaction on card {card_id} to account {account_number}.')
+                        db: User = asyncio.run(get_user_from_card(card_id=card_id))
+                        log.debug(f'Card {card_id} belongs to Telegram user {db.telegram_user_id}')
+                        # ensure that the event is on the application queue
+                        if db:
+                            asyncio.run(self.create_event(telegram_user_id=db.telegram_user_id, payload=doc))
+                        message_handle = message['ReceiptHandle']
+                        log.debug(f'Removing message {message_handle} from queue.')
+                        # remove the message from the queue
+                        sqs.delete_message(QueueUrl=sqs_queue_url, ReceiptHandle=message_handle)
+            except bcece:
+                log.warning(f'SQS', exc_info=True)
+                interruptable_sleep.wait(10)
