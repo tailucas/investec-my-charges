@@ -869,9 +869,13 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
     md_collection: Collection = context.application.bot_data['mongodb_card_collection']
     log.debug(f'Fetching data from MongoDB collection {md_collection!r}...')
     cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
-    total_charges: float = 0.0
-    i=0
+    total_charges: float = float(tran_event['centsAmount'])
+    i=1
     for doc in cursor:
+        doc_id: str = doc['_id']
+        if doc_id == tran_event['_id']:
+            log.debug(f'Skipping database item {doc_id} already present in notification.')
+            continue
         i+=1
         charge_cents_local_currency = await local_currency(
             charge_cents=int(doc['centsAmount']),
