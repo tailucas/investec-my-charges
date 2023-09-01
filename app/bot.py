@@ -242,7 +242,7 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             user_keyboard.append([InlineKeyboardButton(account_label, callback_data=f'{ACTION_ACCOUNT_HISTORY}:{account.account_id}')])
         user_keyboard.append(
             [
-                InlineKeyboardButton("All", callback_data=str(ACTION_ACCOUNT_HISTORY)),
+                InlineKeyboardButton("All", callback_data=f'{ACTION_ACCOUNT_HISTORY}:{DEFAULT_ALL}'),
                 InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
             ]
         )
@@ -266,30 +266,32 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         parse_mode=ParseMode.MARKDOWN)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
+    mongodb_query: dict = {}
+    log.debug(f'{query.data=}')
     account_id = query.data.split(':')[1]
     log.debug(f'Telegram user {user.id} selects account ID {account_id}')
     # fetch associated transaction data
-    reference = {
-        "$ne": "simulation"
-    }
-    if app_config.getboolean('app', 'demo_mode'):
-        reference = {
-            "$eq": "simulation"
-        }
-    mongo_query = {
-        "accountId": {
+    if account_id != DEFAULT_ALL:
+        mongodb_query['accountId'] = {
             "$eq": account_id
-        },
-        "reference": reference
+        }
+    if app_config.getboolean('app', 'demo_mode'):
+        # TODO
+        pass
+    date = get_datetime_a_month_ago()
+    start_date = date.strftime('%Y-%m-%d')
+    mongodb_query['transactionDate'] = {
+        "$gte": start_date
     }
     projection = {}
     sort = []
     md_collection: Collection = context.bot_data['mongodb_account_collection']
-    log.debug(f'Fetching data from MongoDB collection...')
-    cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
+    log.debug(f'Fetching data from MongoDB collection: {mongodb_query=}...')
+    cursor = md_collection.find(mongodb_query, projection=projection, sort=sort)
 
     costs = {}
     for tran in cursor:
+        log.debug(f'{tran=}')
         if tran['type'] == 'CREDIT':
             continue
         tran_amnt = float(tran['amount'])
@@ -303,7 +305,7 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             costs[tran_detail] = tran_amnt
         else:
             costs[tran_detail] += tran_amnt
-    messages = []
+    messages = [f'Since `{start_date}`:']
     for tran_detail, tran_amnt in costs.items():
         messages.append(f'`{locale.currency(tran_amnt)}` *{tran_detail}*')
     await query.edit_message_text(
