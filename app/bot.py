@@ -820,10 +820,67 @@ async def telegram_error_handler(update: Update, context: ContextTypes.DEFAULT_T
 async def transaction_update(update: TransactionUpdate, context: CustomContext) -> None:
     influxdb.write('bot', 'transaction_update', 1)
     chat_member: TelegramChatMember = await context.bot.get_chat_member(chat_id=update.user_id, user_id=update.user_id)
-    telegram_user: TelegramUser = chat_member.user
-    log.debug(f'Transaction for Telegram user ID {update.user_id}.')
-    log.debug(f'Transaction details {update.payload!s}.')
+    user: TelegramUser = chat_member.user
+    log.debug(f'Transaction for Telegram user ID {user.id}.')
+    db_user: Optional[User] = await get_user(telegram_user_id=user.id)
+    if db_user is None:
+        return
+    tran_event: dict = update.payload
+    log.debug(f'Transaction details {tran_event!s}.')
+    card_id = tran_event['card']['id']
+    date = get_datetime_a_month_ago()
+    start_date = date.strftime('%Y-%m-%d')
+    log.debug(f'Telegram user {user.id} has a card event for card ID {card_id}, searching others from {start_date}.')
+    card: Optional[Card] = await get_card(telegram_user_id=user.id, user_id=db_user.id, card_id=int(card_id))
+    if card is None:
+        log.debug(f'No card for Telegram user ID {user.id}.')
+        return
+    card_info = json.loads(card.card_info)
+    account_number: str = card_info['AccountNumber']
+    card_name: str = str(card_info['EmbossedName']).title()
+    merchant_name: str = tran_event['merchant']['name']
+    log.debug(f'Running MongoDB query: {account_number=}, {card_id=}, {start_date=}, {merchant_name=}')
+    # fetch associated transaction data
+    reference = {
+        "$ne": "simulation"
+    }
+    if app_config.getboolean('app', 'demo_mode'):
+        reference = {
+            "$eq": "simulation"
+        }
+    mongo_query = {
+        "accountNumber": {
+            "$eq": account_number
+        },
+        "card.id" : {
+            "$eq": card_id
+        },
+        "type": "card",
+        "dateTime": {
+            "$gte": start_date
+        },
+        "merchant.name": {
+            "$eq": merchant_name
+        },
+        "reference": reference
+    }
+    projection = {}
+    sort = []
+    md_collection: Collection = context.application.bot_data['mongodb_card_collection']
+    log.debug(f'Fetching data from MongoDB collection {md_collection!r}...')
+    cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
+    total_charges: float = 0.0
+    i=0
+    for doc in cursor:
+        i+=1
+        charge_cents_local_currency = await local_currency(
+            charge_cents=int(doc['centsAmount']),
+            charge_currency=str(doc['currencyCode']).upper(),
+            charge_date=str(doc['dateTime']).split('T')[0])
+        total_charges += charge_cents_local_currency
+    # switch to major denomination
+    total_charges = total_charges / 100.0
     await context.bot.send_message(
         chat_id=update.user_id,
-        text=f"{telegram_user.first_name}, {html.unescape(update.payload['merchant']['name'])}",
+        text=f"{user.first_name}, your card <b>{card_name}</b> has <b>{i} charge(s)</b> since {start_date} from <i>{html.unescape(merchant_name)}</i> coming to a total of <b>{locale.currency(total_charges)}</b>.",
         parse_mode=ParseMode.HTML)
