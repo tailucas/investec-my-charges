@@ -107,6 +107,8 @@ from .transaction import TransactionHistory
 
 def main():
     log.setLevel(logging.DEBUG)
+    if app_config.getboolean('app', 'demo_mode'):
+        log.warning('Demo mode enabled! Most responses will be garbage.')
     locale.setlocale(locale.LC_ALL, os.environ['LC_ALL'])
     conv=locale.localeconv()
     int_curr_symbol = str(conv['int_curr_symbol']).rstrip()

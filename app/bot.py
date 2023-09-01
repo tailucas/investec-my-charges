@@ -1,6 +1,7 @@
 import emoji
 import html
 import locale
+import random
 import re
 import requests
 import string
@@ -173,27 +174,22 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     accounts: Optional[Sequence[Account]] = await get_accounts(telegram_user_id=user.id, user_id=db_user.id)
     if accounts is None:
         return ConversationHandler.END
+    random_words = []
+    with open('random_words.txt', 'r') as file:
+        random_words = file.readlines()
     for account in accounts:
         log.debug(f'Telegram user {user.id} selects account ID {account.account_id}')
         # fetch associated transaction data
-        reference = {
-            "$ne": "simulation"
-        }
-        if app_config.getboolean('app', 'demo_mode'):
-            reference = {
-                "$eq": "simulation"
-            }
-        mongo_query = {
+        mongodb_query = {
             "accountId": {
                 "$eq": account.account_id
             },
-            "reference": reference
         }
         projection = {}
         sort = []
         md_collection: Collection = context.bot_data['mongodb_account_collection']
         log.debug(f'Fetching data from MongoDB collection...')
-        cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
+        cursor = md_collection.find(mongodb_query, projection=projection, sort=sort)
         costs = {}
         i=0
         total_debit: float = 0
@@ -204,6 +200,10 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             i+=1
             description = html.unescape(doc['description'])
             charge_local_currency = float(doc['amount'])
+            if app_config.getboolean('app', 'demo_mode'):
+                log.warning(f'Demo mode enabled! Generating fake description and amount for Telegram user {user.id}.')
+                description = random.choice(random_words).strip().title()
+                charge_local_currency = random.uniform(1.0, charge_local_currency)
             total_debit += charge_local_currency
             if description not in costs.keys():
                 costs[description] = charge_local_currency
@@ -219,7 +219,9 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         account_number = account_info['accountNumber']
         log.debug(f'Generating graphic of account activity...')
         df = pd.DataFrame(to_plot)
-        fig = px.pie(df, values='Total', names='Merchant', title=f'{account_name} debits.')
+        # plot the top n
+        top_n = 15
+        fig = px.pie(df.nlargest(top_n, 'Total'), values='Total', names='Merchant', title=f'Top {top_n} {account_name} debits.')
         img_bytes = fig.to_image(format="png")
         caption = f'{account_name} ({account_number}) has {i} debits coming to a total of {locale.currency(total_debit)}.'
         await update.message.reply_photo(photo=img_bytes, caption=caption)
@@ -275,9 +277,6 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         mongodb_query['accountId'] = {
             "$eq": account_id
         }
-    if app_config.getboolean('app', 'demo_mode'):
-        # TODO
-        pass
     date = get_datetime_a_month_ago()
     start_date = date.strftime('%Y-%m-%d')
     mongodb_query['transactionDate'] = {
@@ -295,6 +294,9 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if tran['type'] == 'CREDIT':
             continue
         tran_amnt = float(tran['amount'])
+        if app_config.getboolean('app', 'demo_mode'):
+            log.warning(f'Demo mode enabled! Generating fake amount for Telegram user {user.id}.')
+            tran_amnt = random.uniform(1.0, tran_amnt)
         tran_detail = tran['transactionType']
         if tran_detail is None:
             tran_detail: str = tran['description']
@@ -421,6 +423,7 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         "$ne": "simulation"
     }
     if app_config.getboolean('app', 'demo_mode'):
+        log.warning(f'Demo mode enabled! Using simulation references only for Telegram user {user.id}.')
         reference = {
             "$eq": "simulation"
         }
@@ -465,9 +468,10 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         total_charges += amount_mind
     # switch to major denomination
     total_charges = total_charges / 100.0
+    top_n = 15
     df = pd.DataFrame(to_plot)
     card_labels = ','.join(sorted(card_names))
-    fig = px.pie(df, values='Total', names='Merchant', title=f'Charges on {card_labels} since {date.strftime("%d %B %Y")}')
+    fig = px.pie(df.nlargest(top_n, 'Total'), values='Total', names='Merchant', title=f'Top {top_n} charges on {card_labels} since {date.strftime("%d %B %Y")}')
     img_bytes = fig.to_image(format="png")
     caption = f'{i} charges coming to a total of {locale.currency(total_charges)}.'
     # remove the emoji
@@ -847,6 +851,7 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
         "$ne": "simulation"
     }
     if app_config.getboolean('app', 'demo_mode'):
+        log.warning(f'Demo mode enabled! Using simulation references only for Telegram user {user.id}.')
         reference = {
             "$eq": "simulation"
         }

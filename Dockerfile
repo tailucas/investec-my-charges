@@ -35,4 +35,6 @@ RUN /opt/app/python_setup.sh
 COPY app/ ./app/
 # override entrypoint
 COPY app_entrypoint.sh .
+# demo mode names
+COPY random_words.txt .
 CMD ["/opt/app/entrypoint.sh"]
