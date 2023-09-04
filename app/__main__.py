@@ -32,6 +32,8 @@ class CredsConfig:
 # instantiate class
 builtins.creds_config = CredsConfig()
 
+from sentry_sdk.integrations.logging import ignore_logger
+
 from tailucas_pylib import (
     app_config,
     creds,
@@ -103,6 +105,10 @@ from .bot import (
 from .currency import CurrencyConverter
 from .event import TransactionUpdate, SQSEvent
 from .transaction import TransactionHistory
+
+# Reduce Sentry noise
+ignore_logger('telegram.ext.Updater')
+ignore_logger('telegram.ext._updater')
 
 
 def main():
