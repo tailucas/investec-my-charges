@@ -27,7 +27,7 @@ pandas = "^2.0.3"
 kaleido = "0.2.1"
 lets-plot = "^4.0.0"
 python-dateutil = "^2.8.2"
-tailucas-pylib = "^0.0.1"
+tailucas-pylib = "^0.1.2"
 investec-api-python = "^0.0.1"
 
 [build-system]
