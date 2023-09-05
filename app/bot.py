@@ -834,7 +834,11 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
     tran_event: dict = update.payload
     log.debug(f'Transaction details {tran_event!s}.')
     card_id = tran_event['card']['id']
-    date = get_datetime_a_month_ago()
+    billing_cycle_day: int = app_config.getint('app', 'default_bill_cycle_day_of_month')
+    db_user_setting: UserSetting = await get_user_setting(user_id=db_user.id)
+    if db_user_setting is not None and db_user_setting.bill_cycle_day_of_month is not None:
+        billing_cycle_day: int = db_user_setting.bill_cycle_day_of_month
+    date = get_last_of_day(day=int(billing_cycle_day))
     start_date = date.strftime('%Y-%m-%d')
     log.debug(f'Telegram user {user.id} has a card event for card ID {card_id}, searching others from {start_date}.')
     card: Optional[Card] = await get_card(telegram_user_id=user.id, user_id=db_user.id, card_id=int(card_id))
