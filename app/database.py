@@ -50,6 +50,17 @@ class DbUserSetting(Base):
     bill_cycle_day_of_month = Column(Integer)
 
 
+class DbIntervalSetting(Base):
+    __tablename__ = 'interval_setting'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('user.id'), index=True)
+    account_id = Column(String(32), index=True)
+    card_id = Column(Integer, ForeignKey('card.id'), index=True)
+    # pay day, day of month, days ago
+    report_interval_type = Column(Integer)
+    report_interval_days = Column(Integer)
+
+
 class DbAccessToken(Base):
     __tablename__ = 'access_token'
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -99,6 +110,12 @@ class UserSetting:
     def __init__(self, db: DbUserSetting) -> None:
         self.pay_day_of_month: int = db.pay_day_of_month
         self.bill_cycle_day_of_month: int = db.bill_cycle_day_of_month
+
+
+class IntervalSetting:
+    def __init__(self, db: DbIntervalSetting) -> None:
+        self.report_interval_type: int = db.report_interval_type
+        self.report_interval_days: int = db.report_interval_days
 
 
 class AccessToken:
@@ -160,6 +177,10 @@ class AppDB:
 
     async def _get_db_user_setting(self, user_id: int) -> Optional[DbUserSetting]:
         r: Result = await self.db_session.execute(select(DbUserSetting).where(DbUserSetting.user_id==user_id))
+        return r.scalars().one_or_none()
+
+    async def _get_db_interval_setting(self, user_id: int, account_id: Optional[str] = None, card_id: Optional[int] = None) -> Optional[DbIntervalSetting]:
+        r: Result = await self.db_session.execute(select(DbIntervalSetting).where((DbIntervalSetting.user_id==user_id) & ((DbIntervalSetting.account_id==account_id) | (DbIntervalSetting.card_id==card_id))))
         return r.scalars().one_or_none()
 
     async def _get_db_user_from_card(self, card_id: int) -> Optional[DbUser]:
@@ -253,6 +274,32 @@ class AppDB:
         if db is None:
             return None
         return UserSetting(db=db)
+
+    async def add_interval_setting(self, user_id: int, report_interval_type: int, report_interval_days: int, account_id: Optional[str]=None, card_id: Optional[int]=None) -> None:
+        log.debug(f'Saving settings for DB user {user_id}')
+        if account_id is None and card_id is None:
+            raise AssertionError('Neither account ID nor card ID is set.')
+        db_interval = await self._get_db_interval_setting(user_id=user_id, account_id=account_id, card_id=card_id)
+        if db_interval is None:
+            db_interval = DbIntervalSetting(
+                user_id=user_id,
+                account_id=account_id,
+                report_interval_type=report_interval_type,
+                report_interval_days=report_interval_days)
+        else:
+            if account_id:
+                db_interval.account_id = account_id
+            if card_id:
+                db_interval.card_id = card_id
+        self.db_session.add(db_interval)
+        await self.db_session.flush()
+
+    async def get_interval_setting(self, user_id: int, account_id: Optional[str]=None, card_id: Optional[int]=None) -> Optional[DbIntervalSetting]:
+        log.debug(f'Fetching interval settings for DB user {user_id}, account {account_id}, card {card_id}')
+        db = await self._get_db_interval_setting(user_id=user_id, account_id=account_id, card_id=card_id)
+        if db is None:
+            return None
+        return IntervalSetting(db=db)
 
     async def get_access_token(self, telegram_user_id: int, user_id: int) -> Optional[Tuple[str, datetime]]:
         log.debug(f'Fetching access token for Telegram user {telegram_user_id} (DB user {user_id}).')
@@ -393,6 +440,26 @@ async def get_user_setting(user_id: int) -> Optional[UserSetting]:
         async with session.begin():
             db = AppDB(session)
             return await db.get_user_setting(user_id=user_id)
+
+async def add_interval_setting(user_id: int, report_interval_type: int, report_interval_days: int, account_id: Optional[str]=None, card_id: Optional[int]=None) -> None:
+    async with async_session() as session:
+        async with session.begin():
+            db = AppDB(session)
+            return await db.add_interval_setting(
+                user_id=user_id,
+                report_interval_type=report_interval_type,
+                report_interval_days=report_interval_days,
+                account_id=account_id,
+                card_id=card_id)
+
+async def get_interval_setting(user_id: int, account_id: Optional[str]=None, card_id: Optional[int]=None) -> Optional[IntervalSetting]:
+    async with async_session() as session:
+        async with session.begin():
+            db = AppDB(session)
+            return await db.get_interval_setting(
+                user_id=user_id,
+                account_id=account_id,
+                card_id=card_id)
 
 async def get_access_token(telegram_user_id: int, user_id: int) -> Optional[Tuple[str, datetime]]:
     async with async_session() as session:

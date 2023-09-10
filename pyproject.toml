@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "mycharges"
+name = "app"
 version = "0.1.0"
 description = "Telegram bot application to report on Investec account and card charges"
 authors = ["Tai Lucas <tglucas@gmail.com>"]

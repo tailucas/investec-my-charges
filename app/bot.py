@@ -300,7 +300,7 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         tran_detail = tran['transactionType']
         if tran_detail is None:
             tran_detail: str = tran['description']
-            tran_detail = tran_detail.title()
+            tran_detail = tran_detail.title().replace('*', ' ')
         else:
             tran_detail = split_camel_case(s=tran_detail)
         if tran_detail not in costs:
