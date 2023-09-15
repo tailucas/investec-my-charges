@@ -329,12 +329,25 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         response_message = rf'{emoji.emojize(":credit_card:")} Pick a card:'
         user_keyboard = []
         for card in cards:
+            callback_action = ACTION_CARD_REPORT_INTERVAL
+            action_interval = DEFAULT_INTERVAL
+            report_interval: IntervalSetting = await get_interval_setting(user_id=db_user.id, card_id=card.card_id)
+            log.debug(f'Telegram user {user.id} card {card.card_id} report interval: {report_interval!r}')
+            if report_interval:
+                callback_action = ACTION_CARD_REPORT
+                if report_interval.report_interval_type == REPORT_INTERVAL_TYPE_DATE:
+                    billing_cycle_day: int = app_config.getint('app', 'default_bill_cycle_day_of_month')
+                    db_user_setting: UserSetting = await get_user_setting(user_id=db_user.id)
+                    if db_user_setting is not None and db_user_setting.bill_cycle_day_of_month is not None:
+                        billing_cycle_day: int = db_user_setting.bill_cycle_day_of_month
+                        action_interval = billing_cycle_day
+            log.debug(f'Telegram user {user.id} card {card.card_id} report: {callback_action=}, {action_interval=}')
             info = json.loads(card.card_info)
             card_label = info['EmbossedName']
-            user_keyboard.append([InlineKeyboardButton(card_label, callback_data=f'{ACTION_CARD_REPORT_INTERVAL}:{card.card_id}')])
+            user_keyboard.append([InlineKeyboardButton(card_label, callback_data=f'{callback_action}:{card.card_id}:{action_interval}')])
         user_keyboard.append(
             [
-                InlineKeyboardButton("All", callback_data=f'{ACTION_CARD_REPORT_INTERVAL}:{DEFAULT_ALL}'),
+                InlineKeyboardButton("All", callback_data=f'{callback_action}:{DEFAULT_ALL}:{action_interval}'),
                 InlineKeyboardButton("Cancel", callback_data=str(ACTION_NONE))
             ]
         )
