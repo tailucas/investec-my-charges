@@ -62,22 +62,15 @@ ACTION_AUTHORIZE = 2
 ACTION_REFRESH_PROFILE = 3
 ACTION_SHOW_PROFILE = 4
 ACTION_FORGET = 5
-ACTION_ACCOUNT_REPORT = 6
 ACTION_CARD_REPORT = 7
-ACTION_CARD_REPORT_INTERVAL = 25
-ACTION_ACCOUNT_HISTORY = 8
+ACTION_CARD_REPORT_INTERVAL = 8
+ACTION_ACCOUNT_HISTORY = 9
+ACTION_DEFAULT_DAY = 10
 
-ACTION_ACCOUNT_DEBITS = 9
-ACTION_ACCOUNT_CREDITS = 10
-
-ACTION_SETTINGS_ACCOUNT_DATE = 15
-ACTION_SETTINGS_CARD_DATE = 16
-
-ACTION_SETTINGS_PAY_DAY = 20
-ACTION_SETTINGS_BILL_CYCLE_DAY = 21
-ACTION_SETTINGS_BILL_CYCLE_DAY_ASK = 24
-
-ACTION_SETTINGS_UPDATE = 22
+ACTION_SETTINGS_UPDATE = 20
+ACTION_SETTINGS_PAY_DAY = 21
+ACTION_SETTINGS_BILL_CYCLE_DAY = 22
+ACTION_SETTINGS_RESET_DEFAULT_DAY = 23
 
 DEFAULT_TAG_UNTAGGED = '_untagged_'
 DEFAULT_ALL = '_all_'
@@ -85,6 +78,7 @@ DEFAULT_INTERVAL = '_month_'
 
 USER_DATA_KEY_PAY_DAY = 'save_pay_day'
 USER_DATA_KEY_BILL_CYCLE_DAY = 'save_bill_cycle_day'
+USER_DATA_KEY_DEFAULT_DAY = 'save_default_day'
 
 from .influx import influxdb
 
@@ -104,7 +98,10 @@ from .database import (
     add_user_setting,
     get_card,
     get_cards,
-    add_cards
+    add_cards,
+    add_interval_setting,
+    get_interval_setting,
+    delete_interval_setting
 )
 
 
@@ -624,10 +621,11 @@ async def forget(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         parse_mode=ParseMode.MARKDOWN)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
 
+    # TODO
 
     influxdb.write('bot', 'forget', 1)
     await query.edit_message_text(
-        text='Forgotten.',
+        text='Not implemented.',
         parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
@@ -680,7 +678,10 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         user_keyboard = [
             [
                 InlineKeyboardButton("Set Pay Day", callback_data=ACTION_SETTINGS_PAY_DAY),
-                InlineKeyboardButton("Set Billing Cycle Day", callback_data=ACTION_SETTINGS_BILL_CYCLE_DAY)
+                InlineKeyboardButton("Set Billing Cycle Day", callback_data=ACTION_SETTINGS_BILL_CYCLE_DAY),
+            ],
+            [
+                InlineKeyboardButton("Reset Default Day", callback_data=ACTION_SETTINGS_RESET_DEFAULT_DAY),
             ],
             [
                 InlineKeyboardButton("Cancel", callback_data=f'{ACTION_NONE}:No changes made.')
@@ -704,6 +705,7 @@ async def askpayday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
     await query.answer()
     valid_min = 1
+    # FIXME: last day of month
     valid_max = 28
     valid_response = f'a number between {valid_min} and {valid_max} (inclusive)'
     context.user_data[USER_DATA_KEY_PAY_DAY] = {'min': valid_min, 'max': valid_max, 'response': valid_response}
@@ -732,6 +734,23 @@ async def askbillcycleday(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         text=f'{emoji.emojize(":calendar:")} Enter {valid_response} to represent the day of the month when the *billing cycle* is complete.',
         parse_mode=ParseMode.MARKDOWN)
     return ACTION_SETTINGS_UPDATE
+
+
+async def resetdefaultday(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    user: TelegramUser = update.effective_user
+    log.info(f'Resetting default day for Telegram user {user.id}...')
+    query = update.callback_query
+    # CallbackQueries need to be answered, even if no notification to the user is needed
+    # Some clients may have trouble otherwise. See https://core.telegram.org/bots/api#callbackquery
+    await query.answer()
+    db_user: User = await validate(command_name='update_settings', update=update)
+    if db_user is None:
+        return ConversationHandler.END
+    await delete_interval_setting(user_id=db_user.id)
+    await query.edit_message_text(
+        text=f'Reporting interval is reset for all cards. Query each one to set the default.',
+        parse_mode=ParseMode.MARKDOWN)
+    return ConversationHandler.END
 
 
 async def update_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

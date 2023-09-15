@@ -24,7 +24,7 @@ Base = declarative_base()
 
 from sqlalchemy import Column, Integer, String, JSON, DateTime
 
-from sqlalchemy import update, ForeignKey, UniqueConstraint, Result
+from sqlalchemy import update, ForeignKey, UniqueConstraint, Result, delete
 from sqlalchemy.future import select
 from sqlalchemy.orm import relationship, Mapped, Query
 
@@ -183,6 +183,10 @@ class AppDB:
         r: Result = await self.db_session.execute(select(DbIntervalSetting).where((DbIntervalSetting.user_id==user_id) & ((DbIntervalSetting.account_id==account_id) | (DbIntervalSetting.card_id==card_id))))
         return r.scalars().one_or_none()
 
+    async def _get_db_interval_settings(self, user_id: int) -> Sequence[DbIntervalSetting]:
+        r: Result = await self.db_session.execute(select(DbIntervalSetting).where((DbIntervalSetting.user_id==user_id)))
+        return r.scalars().all()
+
     async def _get_db_user_from_card(self, card_id: int) -> Optional[DbUser]:
         r: Result = await self.db_session.execute(select(DbUser).join(DbCard).where(DbCard.card_id==card_id))
         return r.scalars().one_or_none()
@@ -276,7 +280,7 @@ class AppDB:
         return UserSetting(db=db)
 
     async def add_interval_setting(self, user_id: int, report_interval_type: int, report_interval_days: int, account_id: Optional[str]=None, card_id: Optional[int]=None) -> None:
-        log.debug(f'Saving settings for DB user {user_id}')
+        log.debug(f'Saving interval settings for DB user {user_id}')
         if account_id is None and card_id is None:
             raise AssertionError('Neither account ID nor card ID is set.')
         db_interval = await self._get_db_interval_setting(user_id=user_id, account_id=account_id, card_id=card_id)
@@ -300,6 +304,17 @@ class AppDB:
         if db is None:
             return None
         return IntervalSetting(db=db)
+
+    async def delete_interval_setting(self, user_id: int, account_id: Optional[str]=None, card_id: Optional[int]=None) -> None:
+        log.debug(f'Deleting interval settings for DB user {user_id}')
+        if account_id is None and card_id is None:
+            db_intervals = await self._get_db_interval_settings(user_id=user_id)
+        else:
+            db_intervals = [await self._get_db_interval_setting(user_id=user_id, account_id=account_id, card_id=card_id)]
+        if db_intervals:
+            for db_interval in db_intervals:
+                self.db_session.delete(db_interval)
+            await self.db_session.flush()
 
     async def get_access_token(self, telegram_user_id: int, user_id: int) -> Optional[Tuple[str, datetime]]:
         log.debug(f'Fetching access token for Telegram user {telegram_user_id} (DB user {user_id}).')
@@ -453,6 +468,15 @@ async def add_interval_setting(user_id: int, report_interval_type: int, report_i
                 card_id=card_id)
 
 async def get_interval_setting(user_id: int, account_id: Optional[str]=None, card_id: Optional[int]=None) -> Optional[IntervalSetting]:
+    async with async_session() as session:
+        async with session.begin():
+            db = AppDB(session)
+            return await db.get_interval_setting(
+                user_id=user_id,
+                account_id=account_id,
+                card_id=card_id)
+
+async def delete_interval_setting(user_id: int, account_id: Optional[str]=None, card_id: Optional[int]=None) -> None:
     async with async_session() as session:
         async with session.begin():
             db = AppDB(session)

@@ -77,6 +77,7 @@ from .bot import (
     update_settings,
     askpayday,
     askbillcycleday,
+    resetdefaultday,
     show_profile,
     refresh,
     registration,
@@ -90,14 +91,11 @@ from .bot import (
     ACTION_SHOW_PROFILE,
     ACTION_FORGET,
     ACTION_NONE,
-    ACTION_SETTINGS,
     ACTION_CARD_REPORT,
     ACTION_ACCOUNT_HISTORY,
-    ACTION_SETTINGS_ACCOUNT_DATE,
-    ACTION_SETTINGS_CARD_DATE,
     ACTION_SETTINGS_PAY_DAY,
     ACTION_SETTINGS_BILL_CYCLE_DAY,
-    ACTION_SETTINGS_BILL_CYCLE_DAY_ASK,
+    ACTION_SETTINGS_RESET_DEFAULT_DAY,
     ACTION_SETTINGS_UPDATE,
     ACTION_CARD_REPORT_INTERVAL,
 )
@@ -175,6 +173,7 @@ def main():
             CallbackQueryHandler(callback=registration, pattern="^" + str(ACTION_AUTHORIZE) + "$"),
             CallbackQueryHandler(callback=askpayday, pattern="^" + str(ACTION_SETTINGS_PAY_DAY) + "$"),
             CallbackQueryHandler(callback=askbillcycleday, pattern="^" + str(ACTION_SETTINGS_BILL_CYCLE_DAY) + "$"),
+            CallbackQueryHandler(callback=resetdefaultday, pattern="^" + str(ACTION_SETTINGS_RESET_DEFAULT_DAY) + "$"),
             CallbackQueryHandler(callback=cancel, pattern=f'^{ACTION_NONE}.*$'),
         ]
         settings_handler = ConversationHandler(
