@@ -180,7 +180,7 @@ class AppDB:
         return r.scalars().one_or_none()
 
     async def _get_db_interval_setting(self, user_id: int, account_id: Optional[str] = None, card_id: Optional[int] = None) -> Optional[DbIntervalSetting]:
-        r: Result = await self.db_session.execute(select(DbIntervalSetting).where((DbIntervalSetting.user_id==user_id) & ((DbIntervalSetting.account_id==account_id) | (DbIntervalSetting.card_id==card_id))))
+        r: Result = await self.db_session.execute(select(DbIntervalSetting).where((DbIntervalSetting.user_id==user_id) & ((DbIntervalSetting.account_id.isnot(None) & (DbIntervalSetting.account_id==account_id)) | (DbIntervalSetting.card_id.isnot(None) & (DbIntervalSetting.card_id==card_id)))))
         return r.scalars().one_or_none()
 
     async def _get_db_interval_settings(self, user_id: int) -> Sequence[DbIntervalSetting]:
@@ -288,6 +288,7 @@ class AppDB:
             db_interval = DbIntervalSetting(
                 user_id=user_id,
                 account_id=account_id,
+                card_id=card_id,
                 report_interval_type=report_interval_type,
                 report_interval_days=report_interval_days)
         else:
