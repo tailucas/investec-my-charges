@@ -72,6 +72,9 @@ ACTION_SETTINGS_PAY_DAY = 21
 ACTION_SETTINGS_BILL_CYCLE_DAY = 22
 ACTION_SETTINGS_RESET_DEFAULT_DAY = 23
 
+REPORT_INTERVAL_TYPE_MONTH = 0
+REPORT_INTERVAL_TYPE_DATE = 1
+
 DEFAULT_TAG_UNTAGGED = '_untagged_'
 DEFAULT_ALL = '_all_'
 DEFAULT_INTERVAL = '_month_'
@@ -87,6 +90,7 @@ from .database import (
     Card,
     User,
     UserSetting,
+    IntervalSetting,
     get_access_token,
     update_access_token,
     get_user,
@@ -391,8 +395,10 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     date = None
     if interval == DEFAULT_INTERVAL:
         date = get_datetime_a_month_ago()
+        await add_interval_setting(user_id=db_user.id, report_interval_type=REPORT_INTERVAL_TYPE_MONTH, report_interval_days=31, card_id=int(card_id))
     else:
         date = get_last_of_day(day=int(interval))
+        await add_interval_setting(user_id=db_user.id, report_interval_type=REPORT_INTERVAL_TYPE_DATE, report_interval_days=int(interval), card_id=int(card_id))
     start_date = date.strftime('%Y-%m-%d')
     log.debug(f'Telegram user {user.id} selects card ID {card_id} with interval {interval} ({start_date})')
 

@@ -307,13 +307,15 @@ class AppDB:
 
     async def delete_interval_setting(self, user_id: int, account_id: Optional[str]=None, card_id: Optional[int]=None) -> None:
         log.debug(f'Deleting interval settings for DB user {user_id}')
+        db_intervals = None
         if account_id is None and card_id is None:
             db_intervals = await self._get_db_interval_settings(user_id=user_id)
         else:
             db_intervals = [await self._get_db_interval_setting(user_id=user_id, account_id=account_id, card_id=card_id)]
-        if db_intervals:
+        if db_intervals and len(db_intervals) > 0:
+            log.debug(f'Deleting {len(db_intervals)} interval settings for DB user {user_id}')
             for db_interval in db_intervals:
-                self.db_session.delete(db_interval)
+                await self.db_session.delete(db_interval)
             await self.db_session.flush()
 
     async def get_access_token(self, telegram_user_id: int, user_id: int) -> Optional[Tuple[str, datetime]]:
@@ -480,7 +482,7 @@ async def delete_interval_setting(user_id: int, account_id: Optional[str]=None, 
     async with async_session() as session:
         async with session.begin():
             db = AppDB(session)
-            return await db.get_interval_setting(
+            return await db.delete_interval_setting(
                 user_id=user_id,
                 account_id=account_id,
                 card_id=card_id)
