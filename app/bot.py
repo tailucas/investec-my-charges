@@ -178,12 +178,17 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     random_words = []
     with open('random_words.txt', 'r') as file:
         random_words = file.readlines()
+    date = get_datetime_a_month_ago()
+    start_date = date.strftime('%Y-%m-%d')
     for account in accounts:
         log.debug(f'Telegram user {user.id} selects account ID {account.account_id}')
         # fetch associated transaction data
         mongodb_query = {
             "accountId": {
                 "$eq": account.account_id
+            },
+            "dateTime": {
+                "$gte": start_date
             },
         }
         projection = {}
@@ -218,11 +223,14 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         account_info = json.loads(account.account_info)
         account_name = account_info['productName']
         account_number = account_info['accountNumber']
+        if app_config.getboolean('app', 'demo_mode'):
+            log.warning(f'Demo mode enabled! Generating fake account number and amount for Telegram user {user.id}.')
+            account_number = random.randint(10010000000, 10020000000)
         log.debug(f'Generating graphic of account activity...')
         df = pd.DataFrame(to_plot)
         # plot the top n
         top_n = 15
-        fig = px.pie(df.nlargest(top_n, 'Total'), values='Total', names='Merchant', title=f'Top {top_n} {account_name} debits.')
+        fig = px.pie(df.nlargest(top_n, 'Total'), values='Total', names='Merchant', title=f'Top {top_n} {account_name} debits since {date.strftime("%d %B %Y")}')
         img_bytes = fig.to_image(format="png")
         caption = f'{account_name} ({account_number}) has {i} debits coming to a total of {locale.currency(total_debit)}.'
         await update.message.reply_photo(photo=img_bytes, caption=caption)
@@ -606,7 +614,11 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         account_summary = f''
         for account in accounts:
             info: dict = json.loads(account.account_info)
-            account_summary += f'{emoji.emojize(":ledger:")} {info["productName"]} ({info["accountNumber"]})\n'
+            account_number = info["accountNumber"]
+            if app_config.getboolean('app', 'demo_mode'):
+                log.warning(f'Demo mode enabled! Generating fake account number and amount for Telegram user {user.id}.')
+                account_number = random.randint(10010000000, 10020000000)
+            account_summary += f'{emoji.emojize(":ledger:")} {info["productName"]} ({account_number})\n'
     cards: Optional[Sequence[Card]] = await get_cards(
         telegram_user_id=user.id,
         user_id=db_user.id
@@ -872,11 +884,17 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
     tran_event: dict = update.payload
     log.debug(f'Transaction details {tran_event!s}.')
     card_id = tran_event['card']['id']
+    # user settings for interval type
     billing_cycle_day: int = app_config.getint('app', 'default_bill_cycle_day_of_month')
     db_user_setting: UserSetting = await get_user_setting(user_id=db_user.id)
     if db_user_setting is not None and db_user_setting.bill_cycle_day_of_month is not None:
         billing_cycle_day: int = db_user_setting.bill_cycle_day_of_month
     date = get_last_of_day(day=int(billing_cycle_day))
+    # interval configuration
+    db_interval_setting: IntervalSetting = await get_interval_setting(user_id=db_user.id, card_id=int(card_id))
+    if db_interval_setting:
+        if db_interval_setting.report_interval_type == REPORT_INTERVAL_TYPE_MONTH:
+            date = get_datetime_a_month_ago()
     start_date = date.strftime('%Y-%m-%d')
     log.debug(f'Telegram user {user.id} has a card event for card ID {card_id}, searching others from {start_date}.')
     card: Optional[Card] = await get_card(telegram_user_id=user.id, user_id=db_user.id, card_id=int(card_id))
