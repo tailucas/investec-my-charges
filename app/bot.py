@@ -137,6 +137,13 @@ async def validate(command_name: str, update: Update, validate_registration=True
     allowed_users = app_config.get('telegram', 'enabled_users_csv').split(',')
     if str(user.id) not in allowed_users:
         log.warning(f'{command_name}: ignoring user {user.id} not in allowlist.')
+        help_url = app_config.get('telegram', 'help_url')
+        message = rf'{emoji.emojize(":construction:")} {user.first_name}, I am not ready for general use. You can express interest [here]({help_url}).'
+        await update.message.reply_text(
+            text=message,
+            # do not render the summary
+            disable_web_page_preview=True,
+            parse_mode=ParseMode.MARKDOWN)
         return None
     else:
         log.debug(f'Telegram user {user.id} is in the allow-list: {allowed_users}')
@@ -846,8 +853,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         text=message,
         # do not render the summary
         disable_web_page_preview=True,
-        parse_mode=ParseMode.MARKDOWN
-    )
+        parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
 
