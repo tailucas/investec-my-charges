@@ -187,10 +187,11 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             "accountId": {
                 "$eq": account.account_id
             },
-            "dateTime": {
-                "$gte": start_date
-            },
         }
+        if not app_config.getboolean('app', 'demo_mode'):
+            mongodb_query["dateTime"] = {
+                "$gte": start_date
+            }
         projection = {}
         sort = []
         md_collection: Collection = context.bot_data['mongodb_account_collection']
@@ -312,6 +313,10 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             tran_detail = tran_detail.title().replace('*', ' ')
         else:
             tran_detail = split_camel_case(s=tran_detail)
+        if app_config.getboolean('app', 'demo_mode'):
+            log.warning(f'Demo mode enabled! Generating fake transaction type {user.id}.')
+            if tran_detail.startswith('Cross-Border Card Fee'):
+                tran_detail = 'Cross-Border Card Fee'
         if tran_detail not in costs:
             costs[tran_detail] = tran_amnt
         else:
