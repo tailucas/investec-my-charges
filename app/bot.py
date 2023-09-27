@@ -483,8 +483,14 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     cursor = md_collection.find(mongo_query, projection=projection, sort=sort)
     costs = {}
     i=0
+    reference_seen = {}
     for doc in cursor:
         i+=1
+        reference = doc['reference']
+        if reference != 'simulation' and reference in reference_seen:
+            log.warning(f'Skipping duplicate event with reference {reference}')
+            continue
+        reference_seen[reference] = reference
         charge_cents_local_currency = await local_currency(
             charge_cents=int(doc['centsAmount']),
             charge_currency=str(doc['currencyCode']).upper(),
@@ -952,6 +958,7 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
         charge_currency=str(tran_event['currencyCode']).upper(),
         charge_date=str(tran_event['dateTime']).split('T')[0])
     i=1
+    reference_seen = {}
     for doc in cursor:
         log.debug(f'MongoDB result: {doc!s}')
         doc_id = str(doc['_id'])
@@ -959,6 +966,11 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
             log.debug(f'Skipping database item {doc_id} already present in notification.')
             continue
         i+=1
+        reference = doc['reference']
+        if reference != 'simulation' and reference in reference_seen:
+            log.warning(f'Skipping duplicate event with reference {reference}')
+            continue
+        reference_seen[reference] = reference
         charge_cents_local_currency = await local_currency(
             charge_cents=int(doc['centsAmount']),
             charge_currency=str(doc['currencyCode']).upper(),
