@@ -485,11 +485,12 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     i=0
     reference_seen = {}
     for doc in cursor:
-        i+=1
         reference = doc['reference']
+        log.debug(f'Comparing reference {reference} against references seen: {reference_seen}')
         if reference != 'simulation' and reference in reference_seen:
             log.warning(f'Skipping duplicate event with reference {reference}')
             continue
+        i+=1
         reference_seen[reference] = reference
         charge_cents_local_currency = await local_currency(
             charge_cents=int(doc['centsAmount']),
@@ -965,11 +966,12 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
         if doc_id == tran_event['_id']:
             log.debug(f'Skipping database item {doc_id} already present in notification.')
             continue
-        i+=1
         reference = doc['reference']
+        log.debug(f'Comparing reference {reference} against references seen: {reference_seen}')
         if reference != 'simulation' and reference in reference_seen:
             log.warning(f'Skipping duplicate event with reference {reference}')
             continue
+        i+=1
         reference_seen[reference] = reference
         charge_cents_local_currency = await local_currency(
             charge_cents=int(doc['centsAmount']),
