@@ -28,6 +28,7 @@ class CredsConfig:
     investec_client_id: f'opitem:"Investec" opfield:.client_id' = None # type: ignore
     investec_secret: f'opitem:"Investec" opfield:.secret' = None # type: ignore
     investec_apikey: f'opitem:"Investec" opfield:.api_key' = None # type: ignore
+    exchangerate_host: f'opitem:"exchangerate.host" opfield:.credential' = None # type: ignore
 
 # instantiate class
 builtins.creds_config = CredsConfig()
