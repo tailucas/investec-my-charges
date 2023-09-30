@@ -48,6 +48,9 @@ from pymongo.database import Database
 from pymongo.collection import Collection
 from pymongo.cursor import Cursor
 
+from telegram.error import (
+    TimedOut
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -198,7 +201,10 @@ def main():
         sqs_events.start()
         influxdb.write('app', 'startup', 1)
         log.info('Starting Telegram Bot...')
-        application.run_polling()
+        try:
+            application.run_polling()
+        except TimedOut:
+            log.warning(f'Telegram client error.', exc_info=True)
         log.info('Shutting down...')
     finally:
         die()

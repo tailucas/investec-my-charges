@@ -4,6 +4,7 @@ import simplejson as json
 import time
 import zmq
 
+from requests.exceptions import HTTPError
 from typing import Dict, Optional, Tuple, Sequence, List
 from zmq.error import ZMQError, ContextTerminated, Again
 
@@ -115,7 +116,11 @@ class TransactionHistory(AppThread):
                                 last_post = int(doc['postedOrder'])
                                 last_date = doc['postingDate']
                             log.info(f'Last transaction for account ID {account.account_id} for Telegram user {user.telegram_user_id} is {last_date} (posted order {last_post}). Fetching since...')
-                            response = client.get_account_transactions(account_id=account.account_id, from_date=last_date)
+                            response = None
+                            try:
+                                response = client.get_account_transactions(account_id=account.account_id, from_date=last_date)
+                            except HTTPError as e:
+                                raise ResourceWarning(f'Cannot fetch transactions for account {account.account_id}') from e
                             log.debug(f'Accounts response: {response!s}')
                             if access_token is None or client.access_token != access_token[0]:
                                 log.debug(f'Persisting access token...')

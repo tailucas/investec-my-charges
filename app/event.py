@@ -2,7 +2,10 @@ import asyncio
 import simplejson as json
 
 from asyncio.events import AbstractEventLoop
-from botocore.exceptions import EndpointConnectionError as bcece
+from botocore.exceptions import (
+    ConnectTimeoutError as bccte,
+    EndpointConnectionError as bcece
+)
 from dataclasses import dataclass
 
 from tailucas_pylib import (
@@ -103,6 +106,6 @@ class SQSEvent(AppThread):
                         log.debug(f'Removing message {message_handle} from queue.')
                         # remove the message from the queue
                         sqs.delete_message(QueueUrl=sqs_queue_url, ReceiptHandle=message_handle)
-            except bcece:
+            except (bcece, bccte):
                 log.warning(f'SQS', exc_info=True)
                 interruptable_sleep.wait(10)
