@@ -5,7 +5,9 @@ import asyncio
 import builtins
 import locale
 import os
+import threading
 
+from asyncio import AbstractEventLoop
 from typing import Optional
 
 # setup builtins used by pylib init
@@ -41,7 +43,11 @@ from tailucas_pylib import (
     log
 )
 
-from tailucas_pylib.threads import bye, die
+from tailucas_pylib import threads
+from tailucas_pylib.threads import (
+    bye,
+    die
+)
 from tailucas_pylib.zmq import zmq_term
 
 from pymongo import MongoClient
@@ -111,6 +117,13 @@ from .transaction import TransactionHistory
 # Reduce Sentry noise
 ignore_logger('telegram.ext.Updater')
 ignore_logger('telegram.ext._updater')
+
+
+def terminator(loop: AbstractEventLoop):
+    log.debug('asyncio loop terminator is ready.')
+    threads.interruptable_sleep.wait()
+    log.info(f'Terminating asyncio loop ({threads.shutting_down=})...')
+    loop.stop()
 
 
 def main():
@@ -201,6 +214,12 @@ def main():
         sqs_events = SQSEvent(application=application)
         sqs_events.start()
         influxdb.write('app', 'startup', 1)
+        monitor = threading.Thread(
+            name='LoopTerminator',
+            target=terminator,
+            args=(loop,))
+        log.info('Starting async loop terminator...')
+        monitor.start()
         log.info('Starting Telegram Bot...')
         try:
             application.run_polling()

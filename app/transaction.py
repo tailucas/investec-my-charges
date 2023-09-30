@@ -8,10 +8,9 @@ from requests.exceptions import HTTPError
 from typing import Dict, Optional, Tuple, Sequence, List
 from zmq.error import ZMQError, ContextTerminated, Again
 
-from tailucas_pylib import log
+from tailucas_pylib import log, threads
 from tailucas_pylib.app import AppThread, Closable
 from tailucas_pylib.handler import exception_handler
-from tailucas_pylib.threads import shutting_down, interruptable_sleep
 
 from pymongo import MongoClient, InsertOne, DESCENDING
 from pymongo.database import Database
@@ -49,14 +48,12 @@ class TransactionHistory(AppThread):
             self._sync_interval_secs: int = sync_interval
 
         def run(self):
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
             with exception_handler(
                 connect_url=URL_WORKER_TRANSACTION_HISTORY,
                 socket_type=zmq.REP,
                 and_raise=False,
                 shutdown_on_error=True) as zmq_socket:
-                while not shutting_down:
+                while not threads.shutting_down:
                     trigger = None
                     try:
                         trigger = zmq_socket.recv_pyobj(flags=zmq.NOBLOCK)
@@ -67,7 +64,7 @@ class TransactionHistory(AppThread):
                     sync_needed: bool = trigger or self._last_sync is None or now - self._last_sync >= self._sync_interval_secs
                     if not sync_needed:
                         # never spin
-                        interruptable_sleep.wait(1)
+                        threads.interruptable_sleep.wait(30)
                         continue
                     else:
                         self._last_sync = now
@@ -148,4 +145,3 @@ class TransactionHistory(AppThread):
                         zmq_socket.send_pyobj(response)
                     done_now = int(time.time())
                     log.info(f'Sync completed in {done_now-now}s. Next account history sync is in {self._sync_interval_secs}s.')
-            loop.close()

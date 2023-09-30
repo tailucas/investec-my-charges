@@ -11,13 +11,13 @@ from dataclasses import dataclass
 from tailucas_pylib import (
     app_config,
     creds,
-    log
+    log,
+    threads
 )
 
 from tailucas_pylib.app import AppThread
 from tailucas_pylib.aws import boto3_session
 from tailucas_pylib.handler import exception_handler
-from tailucas_pylib.threads import bye, die, shutting_down, interruptable_sleep
 from tailucas_pylib.zmq import zmq_term, zmq_socket
 
 
@@ -69,7 +69,7 @@ class SQSEvent(AppThread):
         log.info(f'Creating SQS client for queue {sqs_queue_name}')
         sqs = boto3_session.client('sqs')
         sqs_queue_url = app_config.get('aws', 'sqs_queue_url')
-        while not shutting_down:
+        while not threads.shutting_down:
             try:
                 # Take the messages off the queue
                 response = sqs.receive_message(
@@ -108,4 +108,4 @@ class SQSEvent(AppThread):
                         sqs.delete_message(QueueUrl=sqs_queue_url, ReceiptHandle=message_handle)
             except (bcece, bccte):
                 log.warning(f'SQS', exc_info=True)
-                interruptable_sleep.wait(10)
+                threads.interruptable_sleep.wait(10)
