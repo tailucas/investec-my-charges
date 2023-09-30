@@ -1,5 +1,6 @@
 import requests
 
+from datetime import datetime
 from requests.exceptions import RequestException
 from typing import Dict, Optional, Tuple
 
@@ -33,14 +34,15 @@ class CurrencyConverter(ZmqWorker):
         currency = params['source']
         rate = 1
         data = None
-        function_path = message['function_path']
         if currency != self._int_curr_symbol:
             if 'date' in params:
                 currency_map_key = f'{currency}:{params["date"]}'
             else:
-                currency_map_key = f'{currency}:{function_path}'
+                today = datetime.today()
+                currency_map_key = f'{currency}:{today.strftime("%Y-%m-%d")}'
+            function_path = message['function_path']
             if currency_map_key not in self._currency_map.keys():
-                log.debug(f'Making request to convert {self._int_curr_symbol} to {currency} for date {function_path}.')
+                log.debug(f'Making request to convert {self._int_curr_symbol} to {currency} for {function_path}.')
                 error_message = f'Issue with request to {URL_WEB_CONVERTER_PREFIX}'
                 try:
                     params['access_key'] = creds.exchangerate_host
@@ -63,6 +65,7 @@ class CurrencyConverter(ZmqWorker):
                 self._currency_map[currency_map_key] = rate
             else:
                 rate = self._currency_map[currency_map_key]
+                log.debug(f'Returning previously fetched {function_path} rate {rate} for {currency} to {self._int_curr_symbol}.')
         return {
             'int_curr_symbol': self._int_curr_symbol,
             'currency_symbol': self._currency_symbol,
