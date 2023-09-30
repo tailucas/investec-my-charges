@@ -3,5 +3,5 @@
 version: '3'
 
 vars:
-  APP: investec_my_charges
-  DOCKER_APP: investec-my-charges
+  APP: mycharges
+  DOCKER_APP: mycharges
