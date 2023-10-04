@@ -211,9 +211,11 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             tran_type = doc['type']
             if tran_type == 'CREDIT':
                 continue
+            charge_local_currency = float(doc['amount'])
+            if charge_local_currency == 0:
+                continue
             i+=1
             description = html.unescape(doc['description'])
-            charge_local_currency = float(doc['amount'])
             if app_config.getboolean('app', 'demo_mode'):
                 log.warning(f'Demo mode enabled! Generating fake description and amount for Telegram user {user.id}.')
                 description = random.choice(random_words).strip().title()
@@ -223,25 +225,29 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 costs[description] = charge_local_currency
             else:
                 costs[description] += charge_local_currency
-        to_plot = {'Merchant': [], 'Total': []}
-        for merchant, amount_mind in costs.items():
-            to_plot['Merchant'].append(merchant)
-            to_plot['Total'].append(amount_mind)
-        # output totals
         account_info = json.loads(account.account_info)
         account_name = account_info['productName']
         account_number = account_info['accountNumber']
-        if app_config.getboolean('app', 'demo_mode'):
-            log.warning(f'Demo mode enabled! Generating fake account number and amount for Telegram user {user.id}.')
-            account_number = random.randint(10010000000, 10020000000)
-        log.debug(f'Generating graphic of account activity...')
-        df = pd.DataFrame(to_plot)
-        # plot the top n
-        top_n = 15
-        fig = px.pie(df.nlargest(top_n, 'Total'), values='Total', names='Merchant', title=f'Top {top_n} {account_name} debits since {date.strftime("%d %B %Y")}')
-        img_bytes = fig.to_image(format="png")
-        caption = f'{account_name} ({account_number}) has {i} debits coming to a total of {locale.currency(total_debit)}.'
-        await update.message.reply_photo(photo=img_bytes, caption=caption)
+        date_string = date.strftime("%d %B %Y")
+        caption = f'{account_name} ({account_number}) has {i} debits coming to a total of {locale.currency(total_debit)} since {date_string}.'
+        if i > 0:
+            to_plot = {'Merchant': [], 'Total': []}
+            for merchant, amount_mind in costs.items():
+                to_plot['Merchant'].append(merchant)
+                to_plot['Total'].append(amount_mind)
+            # output totals
+            if app_config.getboolean('app', 'demo_mode'):
+                log.warning(f'Demo mode enabled! Generating fake account number and amount for Telegram user {user.id}.')
+                account_number = random.randint(10010000000, 10020000000)
+            log.debug(f'Generating graphic of account activity...')
+            df = pd.DataFrame(to_plot)
+            # plot the top n
+            top_n = 15
+            fig = px.pie(df.nlargest(top_n, 'Total'), values='Total', names='Merchant', title=f'Top {top_n} {account_name} debits since {date_string}')
+            img_bytes = fig.to_image(format="png")
+            await update.message.reply_photo(photo=img_bytes, caption=caption)
+        else:
+            await update.message.reply_markdown(text=caption)
     return ConversationHandler.END
 
 
@@ -311,6 +317,8 @@ async def account_history(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if tran['type'] == 'CREDIT':
             continue
         tran_amnt = float(tran['amount'])
+        if tran_amnt == 0:
+            continue
         if app_config.getboolean('app', 'demo_mode'):
             log.warning(f'Demo mode enabled! Generating fake amount for Telegram user {user.id}.')
             tran_amnt = random.uniform(1.0, tran_amnt)
@@ -490,10 +498,13 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         if reference != 'simulation' and reference in reference_seen:
             log.warning(f'Skipping duplicate event with reference {reference}')
             continue
+        cents_amount = int(doc['centsAmount'])
+        if cents_amount == 0:
+            continue
         i+=1
         reference_seen[reference] = reference
         charge_cents_local_currency = await local_currency(
-            charge_cents=int(doc['centsAmount']),
+            charge_cents=cents_amount,
             charge_currency=str(doc['currencyCode']).upper(),
             charge_date=str(doc['dateTime']).split('T')[0])
         merchant = doc['merchant']['name']
@@ -501,7 +512,6 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             costs[merchant] = charge_cents_local_currency
         else:
             costs[merchant] += charge_cents_local_currency
-
     log.debug(f'{i} transactions fetched.')
     to_plot = {'Merchant': [], 'Total': []}
     total_charges: float = 0.0
@@ -511,15 +521,19 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         total_charges += amount_mind
     # switch to major denomination
     total_charges = total_charges / 100.0
-    top_n = 15
-    df = pd.DataFrame(to_plot)
-    card_labels = ','.join(sorted(card_names))
-    fig = px.pie(df.nlargest(top_n, 'Total'), values='Total', names='Merchant', title=f'Top {top_n} charges on {card_labels} since {date.strftime("%d %B %Y")}')
-    img_bytes = fig.to_image(format="png")
-    caption = f'{i} charges coming to a total of {locale.currency(total_charges)}.'
+    date_string = date.strftime("%d %B %Y")
+    caption = f'{i} charges coming to a total of {locale.currency(total_charges)} since {date_string}.'
     # remove the emoji
     await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.effective_message.id)
-    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=img_bytes, caption=caption)
+    if i > 0:
+        top_n = 15
+        df = pd.DataFrame(to_plot)
+        card_labels = ','.join(sorted(card_names))
+        fig = px.pie(df.nlargest(top_n, 'Total'), values='Total', names='Merchant', title=f'Top {top_n} charges on {card_labels} since {date_string}')
+        img_bytes = fig.to_image(format="png")
+        await context.bot.send_photo(chat_id=update.effective_chat.id, photo=img_bytes, caption=caption)
+    else:
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=caption, parse_mode=ParseMode.MARKDOWN)
     return ConversationHandler.END
 
 
@@ -971,10 +985,13 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
         if reference != 'simulation' and reference in reference_seen:
             log.warning(f'Skipping duplicate event with reference {reference}')
             continue
+        cents_amount = int(doc['centsAmount'])
+        if cents_amount == 0:
+            continue
         i+=1
         reference_seen[reference] = reference
         charge_cents_local_currency = await local_currency(
-            charge_cents=int(doc['centsAmount']),
+            charge_cents=cents_amount,
             charge_currency=str(doc['currencyCode']).upper(),
             charge_date=str(doc['dateTime']).split('T')[0])
         total_charges += charge_cents_local_currency
