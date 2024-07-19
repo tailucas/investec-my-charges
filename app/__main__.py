@@ -13,6 +13,7 @@ from typing import Optional
 # setup builtins used by pylib init
 from . import APP_NAME
 builtins.SENTRY_EXTRAS = []
+AWS_REGION = os.environ['AWS_DEFAULT_REGION']
 influx_creds_section = 'local'
 
 class CredsConfig:
@@ -25,8 +26,8 @@ class CredsConfig:
     influxdb_url: f'opitem:"InfluxDB" opfield:{influx_creds_section}.url' = None # type: ignore
     mongodb_user: f'opitem:"MongoDB" opfield:{APP_NAME}.user' = None # type: ignore
     mongodb_password: f'opitem:"MongoDB" opfield:{APP_NAME}.pwd' = None # type: ignore
-    aws_akid: f'opitem:"AWS.{APP_NAME}" opfield:.username' = None # type: ignore
-    aws_sak: f'opitem:"AWS.{APP_NAME}" opfield:.password' = None # type: ignore
+    aws_akid: f'opitem:"AWS.{APP_NAME}" opfield:{AWS_REGION}.akid' = None # type: ignore
+    aws_sak: f'opitem:"AWS.{APP_NAME}" opfield:{AWS_REGION}.sak' = None # type: ignore
     investec_client_id: f'opitem:"Investec" opfield:.client_id' = None # type: ignore
     investec_secret: f'opitem:"Investec" opfield:.secret' = None # type: ignore
     investec_apikey: f'opitem:"Investec" opfield:.api_key' = None # type: ignore

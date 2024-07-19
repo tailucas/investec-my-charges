@@ -1,9 +1,12 @@
 import asyncio
 
+from . import APP_NAME
+
 import simplejson as json
 
 from asyncio import AbstractEventLoop
 from datetime import datetime, timedelta
+from os import path
 from typing import Dict, List, Tuple, Optional, Sequence
 
 from tailucas_pylib import (
@@ -16,8 +19,10 @@ from .crypto import encrypt, decrypt, digest
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
-db_tablespace: str = app_config.get('sqlite', 'tablespace_path')
-dburl: str = f'sqlite+aiosqlite:///{db_tablespace}'
+
+db_tablespace_path = app_config.get('sqlite', 'tablespace_path')
+db_tablespace = path.join(f'{db_tablespace_path}', f'{APP_NAME}.db')
+dburl = f'sqlite+aiosqlite:///{db_tablespace}'
 engine: AsyncEngine = create_async_engine(dburl)
 async_session: AsyncSession = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 Base = declarative_base()
