@@ -41,11 +41,12 @@ URL_WORKER_TRANSACTION_HISTORY = 'inproc://transaction-history'
 
 class TransactionHistory(AppThread):
 
-        def __init__(self, mongodb_collection: Collection, sync_interval: int):
+        def __init__(self, mongodb_collection: Collection, sync_interval: int, do_db_mutations: bool):
             AppThread.__init__(self, name=self.__class__.__name__)
             self._mongodb_collection: Collection = mongodb_collection
             self._last_sync: Optional[int] = None
             self._sync_interval_secs: int = sync_interval
+            self._do_db_mutations = do_db_mutations
 
         def run(self):
             with exception_handler(
@@ -135,8 +136,11 @@ class TransactionHistory(AppThread):
                                     continue
                                 updates.append(tran)
                             if len(updates) > 0:
-                                log.info(f'Inserting {len(updates)} into MongoDB collection...')
-                                self._mongodb_collection.insert_many(updates)
+                                if self._do_db_mutations:
+                                    log.info(f'Inserting {len(updates)} into MongoDB collection...')
+                                    self._mongodb_collection.insert_many(updates)
+                                else:
+                                    log.warning(f'Not inserting {len(updates)} into MongoDB collection due to feature flag or config.')
                             else:
                                 log.info(f'No new records to insert.')
                     # respond to the trigger

@@ -30,6 +30,7 @@ tailucas-pylib = "^0.4.2"
 investec-api-python = "^0.0.1"
 onepasswordconnectsdk = {git = "https://github.com/tglucas/connect-sdk-python.git"}
 python-telegram-bot = "^21.4"
+unleashclient = "^5.12.2"
 
 [build-system]
 requires = ["poetry-core"]

@@ -9,6 +9,7 @@ import threading
 
 from asyncio import AbstractEventLoop
 from typing import Optional
+from UnleashClient import UnleashClient
 
 # setup builtins used by pylib init
 from . import APP_NAME
@@ -32,6 +33,9 @@ class CredsConfig:
     investec_secret: f'opitem:"Investec" opfield:.secret' = None # type: ignore
     investec_apikey: f'opitem:"Investec" opfield:.api_key' = None # type: ignore
     exchangerate_host: f'opitem:"exchangerate.host" opfield:.credential' = None # type: ignore
+    unleash_token: f'opitem:"Unleash" opfield:.password' = None # type: ignore
+    unleash_url: f'opitem:"Unleash" opfield:default.url' = None # type: ignore
+    unleash_app: f'opitem:"Unleash" opfield:default.app_name' = None # type: ignore
 
 # instantiate class
 builtins.creds_config = CredsConfig()
@@ -111,6 +115,15 @@ from .bot import (
     ACTION_CARD_REPORT_INTERVAL,
 )
 
+
+# feature flags configuration
+features = UnleashClient(
+    url=creds.unleash_url,
+    app_name=creds.unleash_app,
+    custom_headers={'Authorization': creds.unleash_token})
+features.initialize_client()
+
+
 from .currency import CurrencyConverter
 from .event import TransactionUpdate, SQSEvent
 from .transaction import TransactionHistory
@@ -166,7 +179,8 @@ def main():
         log.info('Starting transaction history synchronizer...')
         transaction_history = TransactionHistory(
             mongodb_collection=md_account_collection,
-            sync_interval=app_config.getint('app', 'transaction_history_refresh_interval_secs'))
+            sync_interval=app_config.getint('app', 'transaction_history_refresh_interval_secs'),
+            do_db_mutations=features.is_enabled('database-mutations-from-recon'))
         transaction_history.start()
         log.info('Starting Telegram Bot...')
         """Start the bot."""
@@ -212,7 +226,12 @@ def main():
         # error handling
         application.add_error_handler(callback=telegram_error_handler)
         # transaction events
-        sqs_events = SQSEvent(application=application)
+        sqs_events = SQSEvent(
+            application=application,
+            mongodb_collection=md_account_collection,
+            queue_url=app_config.get('aws', 'sqs_queue_url'),
+            do_db_mutations=features.is_enabled('database-mutations-from-events'),
+            remove_queued_messages=features.is_enabled('event-queue-remove-messages'))
         sqs_events.start()
         influxdb.write('app', 'startup', 1)
         monitor = threading.Thread(
@@ -221,11 +240,16 @@ def main():
             args=(loop,))
         log.info('Starting async loop terminator...')
         monitor.start()
-        log.info('Starting Telegram Bot...')
-        try:
-            application.run_polling()
-        except TimedOut:
-            log.warning(f'Telegram client error.', exc_info=True)
+        if features.is_enabled("telegram-bot"):
+            log.info('Starting Telegram Bot...')
+            try:
+                application.run_polling()
+            except TimedOut:
+                log.warning(f'Telegram client error.', exc_info=True)
+        else:
+            log.warning(f'Not running Telegram bot client due to feature flag.')
+            log.info('Startup complete.')
+            threads.interruptable_sleep.wait()
         log.info('Shutting down...')
     finally:
         die()
