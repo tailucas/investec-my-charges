@@ -105,8 +105,7 @@ class SQSEvent(AppThread):
                 )
                 if 'Messages' in response.keys():
                     for message in response['Messages']:
-                        m_json_body = message['Body']
-                        m = json.loads(m_json_body)
+                        m = json.loads(message['Body'])
                         db_origin, doc = self.unwrap_db_message(m=m)
                         if doc and 'accountNumber' in doc and 'card' in doc:
                             account_number = doc['accountNumber']
@@ -120,7 +119,7 @@ class SQSEvent(AppThread):
                                 if not db_origin:
                                     if self._do_db_mutations:
                                         log.info(f'Inserting transaction into MongoDB collection...')
-                                        self._mongodb_collection.insert_one(m_json_body)
+                                        self._mongodb_collection.insert_one(m)
                                     else:
                                         log.warning(f'Not inserting transaction into MongoDB collection due to feature flag or config.')
                                 log.info(f'Creating notification event for Telegram user {db.telegram_user_id}')
