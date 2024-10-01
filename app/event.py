@@ -116,6 +116,7 @@ class SQSEvent(AppThread):
                             # ensure that the event is on the application queue
                             if db:
                                 log.debug(f'Card {card_id} belongs to Telegram user {db.telegram_user_id}')
+                                duplicate_event = False
                                 # but first, if the message is not of DB origin, then write it to the DB
                                 if not db_origin:
                                     if self._do_db_mutations:
@@ -124,10 +125,12 @@ class SQSEvent(AppThread):
                                             self._mongodb_collection.insert_one(m)
                                         except DuplicateKeyError as e:
                                             log.warning(f'Not inserting duplicate transaction into MongoDB collection due to {e.details}', exc_info=True)
+                                            duplicate_event = True
                                     else:
                                         log.warning(f'Not inserting transaction into MongoDB collection due to feature flag or config.')
-                                log.info(f'Creating notification event for Telegram user {db.telegram_user_id}')
-                                asyncio.run(self.create_event(telegram_user_id=db.telegram_user_id, payload=doc))
+                                if not duplicate_event:
+                                    log.info(f'Creating notification event for Telegram user {db.telegram_user_id}')
+                                    asyncio.run(self.create_event(telegram_user_id=db.telegram_user_id, payload=doc))
                             else:
                                 log.warning(f'Ignoring event for card ID {card_id} (account {account_number}) without an associated user.')
                         else:
