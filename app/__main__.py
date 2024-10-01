@@ -228,7 +228,7 @@ def main():
         # transaction events
         sqs_events = SQSEvent(
             application=application,
-            mongodb_collection=md_account_collection,
+            mongodb_collection=md_card_collection,
             queue_url=app_config.get('aws', 'sqs_queue_url'),
             do_db_mutations=features.is_enabled('database-mutations-from-events'),
             remove_queued_messages=features.is_enabled('event-queue-remove-messages'))
