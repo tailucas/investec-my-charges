@@ -24,6 +24,7 @@ from pymongo import MongoClient, InsertOne, DESCENDING
 from pymongo.database import Database
 from pymongo.collection import Collection
 from pymongo.cursor import Cursor
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from telegram.ext import (
     Application,
@@ -119,7 +120,10 @@ class SQSEvent(AppThread):
                                 if not db_origin:
                                     if self._do_db_mutations:
                                         log.info(f'Inserting transaction into MongoDB collection...')
-                                        self._mongodb_collection.insert_one(m)
+                                        try:
+                                            self._mongodb_collection.insert_one(m)
+                                        except DuplicateKeyError as e:
+                                            log.warning(f'Not inserting duplicate transaction into MongoDB collection due to {e.details}', exc_info=True)
                                     else:
                                         log.warning(f'Not inserting transaction into MongoDB collection due to feature flag or config.')
                                 log.info(f'Creating notification event for Telegram user {db.telegram_user_id}')
@@ -136,6 +140,6 @@ class SQSEvent(AppThread):
                             sqs.delete_message(QueueUrl=self._queue_url, ReceiptHandle=message_handle)
                         else:
                             log.warning(f'Not removing message {message_handle} from queue due to feature flag or config.')
-            except (bcece, bccte):
+            except (bcece, bccte, OperationFailure):
                 log.warning(f'SQS', exc_info=True)
                 threads.interruptable_sleep.wait(10)
