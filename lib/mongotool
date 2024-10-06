@@ -1,0 +1,222 @@
+#!/usr/bin/env python
+import argparse
+from argparse import ArgumentParser, Namespace
+from bson.json_util import dumps, loads
+from bson.objectid import ObjectId
+from datetime import datetime
+import hashlib
+import logging.handlers
+from logging import Logger
+import os.path
+import pprint
+import sys
+import time
+from typing import List
+
+import onepasswordconnectsdk
+
+from pathlib import Path
+from onepasswordconnectsdk.client import (
+    Client,
+    new_client_from_environment
+)
+
+from pymongo import MongoClient, InsertOne, DESCENDING
+from pymongo.database import Database
+from pymongo.collection import Collection
+from pymongo.cursor import Cursor
+from pymongo.errors import WriteError
+from pymongo.results import DeleteResult, UpdateResult
+
+
+args: Namespace = None
+def init_cli():
+    global args
+    parser: ArgumentParser = argparse.ArgumentParser(description='Fetch Spotify content.')
+    action_group = parser.add_mutually_exclusive_group(required=True)
+    action_group.add_argument('--fix-duplicates', action='store_true', help='Fix duplicate entries')
+    action_group.add_argument('--dump-collection', action='store_true', help='Dump the named collection to a JSON-encoded file with the same name')
+    parser.add_argument('-c', action='store', dest='mongodb_collection', required=True, help='MongoDB collection to access')
+    parser.add_argument('-s', action='store', dest='mongodb_sort_field', required=False, help='MongoDB field on which to sort')
+    parser.add_argument('-u', action='store', dest='mondodb_unique_field', required=False, help='MongoDB field to treat as unique')
+    parser.add_argument('--no-dry-run', action='store_true', default=False, help='Make changes associated with the action')
+    parser.add_argument('--overwrite', action='store_true', default=False, help='Automatically overwrite existing output files')
+    parser.add_argument('--debug', action='store_true', default=False, help='Use debug level logging')
+    args = parser.parse_args()
+
+
+APP_NAME = Path(__file__).stem
+
+
+log: Logger = None
+def init_log():
+    global log
+    log = logging.getLogger(APP_NAME)
+    # do not propagate to console logging
+    log.propagate = False
+    formatter = logging.Formatter('%(name)s %(threadName)s [%(levelname)s] %(message)s')
+    if sys.stdout.isatty():
+        stream_handler = logging.StreamHandler(stream=sys.stderr)
+        stream_handler.setFormatter(formatter)
+        log.addHandler(stream_handler)
+    if args.debug:
+        log.setLevel(logging.DEBUG)
+    else:
+        log.setLevel(logging.INFO)
+
+
+class CredsConfig:
+    mongodb_user: f'opitem:"MongoDB" opfield:{APP_NAME}.user' = None # type: ignore
+    mongodb_password: f'opitem:"MongoDB" opfield:{APP_NAME}.pwd' = None # type: ignore
+    mongodb_db: f'opitem:"MongoDB" opfield:{APP_NAME}.db' = None # type: ignore
+    mongodb_connection_string: f'opitem:"MongoDB" opfield:{APP_NAME}.connection_string' = None # type: ignore
+
+
+creds: CredsConfig = None
+def get_creds():
+    global creds
+    if creds is None:
+        try:
+            os.environ['OP_CONNECT_TOKEN']
+            os.environ['OP_VAULT']
+        except KeyError:
+            raise RuntimeError(f'Credential failure. 1Password environment not correctly set up.')
+        creds_config = CredsConfig()
+        creds_client: Client = new_client_from_environment()
+        creds_vaults = creds_client.get_vaults()
+        for vault in creds_vaults:
+            log.debug(f"Credential vault {vault.name} contains {vault.items} credentials.")
+        creds = onepasswordconnectsdk.load(client=creds_client, config=creds_config)
+    return creds
+
+
+def test_file(collection_name: str) -> str:
+    json_file_name = f'{collection_name}.json'
+    if os.path.isfile(json_file_name):
+        if not args.overwrite:
+            raise RuntimeError(f'Remove existing file {json_file_name} or use overwrite option.')
+        else:
+            log.warning(f'Overwriting existing file {json_file_name}.')
+    return json_file_name
+
+
+def write_to_file(item_list: List, json_file_name: str):
+    match_counter = len(item_list)
+    file_contents = dumps(item_list)
+    output_digest = hashlib.md5(file_contents.encode()).hexdigest()
+    log.info(f'Writing {match_counter} items to {json_file_name}...')
+    with open(json_file_name, "w") as file:
+        file.write(file_contents)
+    verify_digest = hashlib.md5(open(json_file_name,'rb').read()).hexdigest()
+    if output_digest != verify_digest:
+        raise RuntimeError(f'{json_file_name} digest mismatch. Expected {output_digest}, got {verify_digest}.')
+    log.info(f'Verified {match_counter} items in {json_file_name} (digest {output_digest}).')
+
+
+md_conn: MongoClient = None
+def get_collection(collection_name: str) -> Collection:
+    global md_conn
+    creds: CredsConfig = get_creds()
+    if md_conn is None:
+        log.debug(f'Opening MongoDB connection {creds.mongodb_user}@{creds.mongodb_db} ({creds.mongodb_connection_string})...')
+        db_url = creds.mongodb_connection_string.replace('__USER__', creds.mongodb_user).replace('__PASSWORD__', creds.mongodb_password)
+        md_conn = MongoClient(db_url)
+    md_db: Database = md_conn[creds.mongodb_db]
+    log.debug(f'Using MongoDB collection "{collection_name}".')
+    return md_db[collection_name]
+
+
+def get_items(collection_name: str) -> Cursor:
+    log.info(f'Finding documents in collection "{collection_name}"...')
+    items: Cursor = get_collection(collection_name=collection_name).find()
+    sort_field = args.mongodb_sort_field
+    if sort_field:
+        log.info(f'Sorting based on field "{sort_field}"...')
+        items = items.sort(sort_field)
+    return items
+
+
+def main():
+    pp = pprint.PrettyPrinter(compact=True)
+    match_counter = 0
+    modify_counter = 0
+    my_collection = args.mongodb_collection
+    if args.dump_collection:
+        backup_filename = test_file(collection_name=my_collection)
+        item_list = list(get_items(collection_name=my_collection))
+        match_counter = len(item_list)
+        write_to_file(item_list=item_list, json_file_name=backup_filename)
+    if args.fix_duplicates:
+        if args.mondodb_unique_field:
+            my_identity_field = args.mondodb_unique_field
+            backup_filename = test_file(collection_name=f'{my_collection}_duplicates')
+            log.info(f'Identifying duplicate entries based on field {my_identity_field}...')
+            duplicates = []
+            item_map = {}
+            item: Cursor
+            for item in get_items(collection_name=my_collection):
+                try:
+                    identity = item[my_identity_field]
+                except KeyError:
+                    pp.pprint(item)
+                    raise RuntimeError(f'Cannot index {my_identity_field} on item.')
+                sim_id = 'simulation'
+                if identity == sim_id and 'dateTime' in item:
+                    match_counter += 1
+                    duplicates.append(item)
+                    date_str = item['dateTime']
+                    unix_ts = time.mktime(datetime.fromisoformat(date_str).timetuple())
+                    new_ref = f'{sim_id}_{int(unix_ts)}'
+                    log.info(f'Updating {my_identity_field}={identity} to {new_ref} based on time stamp {date_str}.')
+                    pp.pprint(item)
+                    if args.no_dry_run:
+                        oid: ObjectId = item['_id']
+                        ur: UpdateResult = get_collection(collection_name=my_collection).update_one(
+                            filter={'_id': oid}, 
+                            update={'$set': { my_identity_field: new_ref }})
+                        if ur.matched_count != 1 or ur.modified_count != 1:
+                            # do not raise here preventing successful backup
+                            log.warning(f'Unexpected count {dr.deleted_count} for item {my_identity_field}={identity} using ID {oid!s}.')
+                        log.info(f'{ur.modified_count} item updated (write ack? {ur.acknowledged}).')
+                    else:
+                        log.warning(f'Not updating {my_identity_field}={identity} in dry-run mode.')
+                elif identity in item_map:
+                    match_counter += 1
+                    duplicates.append(item)
+                    log.info(f'Removing duplicate {my_identity_field}={identity}.')
+                    pp.pprint(item)
+                    if args.no_dry_run:
+                        oid: ObjectId = item['_id']
+                        dr: DeleteResult = get_collection(collection_name=my_collection).delete_one({'_id': oid})
+                        modify_counter += dr.deleted_count
+                        if dr.deleted_count != 1:
+                            # do not raise here preventing successful backup
+                            log.warning(f'Unexpected count {dr.deleted_count} for item {my_identity_field}={identity} using ID {oid!s}.')
+                        log.info(f'{dr.deleted_count} item removed (write ack? {dr.acknowledged}).')
+                    else:
+                        log.warning(f'Not deleting {my_identity_field}={identity} in dry-run mode.')
+                else:
+                    item_map[identity] = item
+            if len(duplicates) > 0:
+                log.info(f'Creating duplicates backup to {backup_filename}.')
+                write_to_file(item_list=duplicates, json_file_name=backup_filename)
+        else:
+            raise RuntimeError(f'Missing option -u.')
+    log.info(f'Matched {match_counter}. Modified {modify_counter}.')
+
+
+if __name__ == "__main__":
+    try:
+        init_cli()
+        init_log()
+        main()
+    except RuntimeError as e:
+        log.error(f'{e!s}')
+        sys.exit(1)
+    finally:
+        if md_conn:
+            try:
+                log.debug(f'Closing MongoDB database connection to {md_conn.list_database_names()}.')
+                md_conn.close()
+            except Exception as e:
+                log.warning(f'{e!s}')
