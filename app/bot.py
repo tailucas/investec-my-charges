@@ -464,12 +464,12 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     log.debug(f'Running MongoDB query: {account_numbers=}, {card_ids=}')
     # fetch associated transaction data
     reference = {
-        "$ne": "simulation"
+        "$ne": { "$regex": "/^simulation*/" }
     }
     if app_config.getboolean('app', 'demo_mode'):
         log.warning(f'Demo mode enabled! Using simulation references only for Telegram user {user.id}.')
         reference = {
-            "$eq": "simulation"
+            "$eq": { "$regex": "/^simulation*/" }
         }
     mongo_query = {
         "accountNumber": {
@@ -493,9 +493,9 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     i=0
     reference_seen = {}
     for doc in cursor:
-        reference = doc['reference']
+        reference: str = doc['reference']
         log.debug(f'Comparing reference {reference} against references seen: {reference_seen}')
-        if reference != 'simulation' and reference in reference_seen:
+        if not reference.startswith('simulation') and reference in reference_seen:
             log.warning(f'Skipping duplicate event with reference {reference}')
             continue
         cents_amount = int(doc['centsAmount'])
