@@ -469,7 +469,7 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     if app_config.getboolean('app', 'demo_mode'):
         log.warning(f'Demo mode enabled! Using simulation references only for Telegram user {user.id}.')
         reference = {
-            "$eq": { "$regex": "/^simulation*/" }
+            "$regex": "/^simulation*/"
         }
     mongo_query = {
         "accountNumber": {
@@ -495,7 +495,7 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     for doc in cursor:
         reference: str = doc['reference']
         log.debug(f'Comparing reference {reference} against references seen: {reference_seen}')
-        if not reference.startswith('simulation') and reference in reference_seen:
+        if reference in reference_seen:
             log.warning(f'Skipping duplicate event with reference {reference}')
             continue
         cents_amount = int(doc['centsAmount'])
@@ -940,12 +940,12 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
     log.debug(f'Running MongoDB query: {account_number=}, {card_id=}, {start_date=}, {merchant_name=}')
     # fetch associated transaction data
     reference = {
-        "$ne": "simulation"
+        "$ne": { "$regex": "/^simulation*/" }
     }
     if app_config.getboolean('app', 'demo_mode'):
         log.warning(f'Demo mode enabled! Using simulation references only for Telegram user {user.id}.')
         reference = {
-            "$eq": "simulation"
+            "$regex": "/^simulation*/"
         }
     mongo_query = {
         "accountNumber": {
@@ -980,9 +980,9 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
         if doc_id == tran_event['_id']:
             log.debug(f'Skipping database item {doc_id} already present in notification.')
             continue
-        reference = doc['reference']
+        reference: str = doc['reference']
         log.debug(f'Comparing reference {reference} against references seen: {reference_seen}')
-        if reference != 'simulation' and reference in reference_seen:
+        if reference in reference_seen:
             log.warning(f'Skipping duplicate event with reference {reference}')
             continue
         cents_amount = int(doc['centsAmount'])
