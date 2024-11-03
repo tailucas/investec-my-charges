@@ -463,7 +463,7 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     log.debug(f'Running MongoDB query: {account_numbers=}, {card_ids=}')
     # fetch associated transaction data
     reference = {
-        "$ne": { "$regex": "/^simulation*/" }
+        "$not": { "$regex": "/^simulation*/" }
     }
     if app_config.getboolean('app', 'demo_mode'):
         log.warning(f'Demo mode enabled! Using simulation references only for Telegram user {user.id}.')
@@ -933,7 +933,7 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
     log.debug(f'Running MongoDB query: {account_number=}, {card_id=}, {start_date=}, {merchant_name=}')
     # fetch associated transaction data
     reference = {
-        "$ne": { "$regex": "/^simulation*/" }
+        "$not": { "$regex": "/^simulation*/" }
     }
     if app_config.getboolean('app', 'demo_mode'):
         log.warning(f'Demo mode enabled! Using simulation references only for Telegram user {user.id}.')
