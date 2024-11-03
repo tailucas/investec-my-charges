@@ -52,8 +52,7 @@ class CurrencyConverter(ZmqWorker):
                     response.raise_for_status()
                 except RequestException as e:
                     raise AssertionError(error_message) from e
-                json_data = response.json()
-                data = loads(json_data)
+                data = response.json()
                 request_success = False
                 if 'success' in data:
                     request_success = data['success']
@@ -71,7 +70,7 @@ class CurrencyConverter(ZmqWorker):
             'int_curr_symbol': self._int_curr_symbol,
             'currency_symbol': self._currency_symbol,
             'rate': rate,
-            'data': json_data,
+            'data': data,
         }
 
 
