@@ -1,6 +1,5 @@
 import asyncio
-import html
-import simplejson as json
+from bson.json_util import loads
 import time
 import zmq
 
@@ -78,7 +77,7 @@ class TransactionHistory(AppThread):
                         log.info(f'Loaded {len(users)} users.')
                     for user in users:
                         access_token: Optional[Tuple] = asyncio.run(get_access_token(telegram_user_id=user.telegram_user_id, user_id=user.id))
-                        creds = json.loads(user.investec_credentials)
+                        creds = loads(user.investec_credentials)
                         client = InvestecOpenApiClient(
                             client_id=user.investec_client_id,
                             secret=creds['secret'],

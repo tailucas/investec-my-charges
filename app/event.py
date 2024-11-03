@@ -1,6 +1,7 @@
 import asyncio
+from bson.json_util import loads
+from bson.objectid import ObjectId
 from datetime import datetime
-import simplejson as json
 import time
 
 from asyncio.events import AbstractEventLoop
@@ -27,6 +28,7 @@ from pymongo.database import Database
 from pymongo.collection import Collection
 from pymongo.cursor import Cursor
 from pymongo.errors import WriteError, DuplicateKeyError
+from pymongo.results import InsertOneResult
 
 from telegram.ext import (
     Application,
@@ -44,6 +46,7 @@ from typing import Tuple
 @dataclass
 class TransactionUpdate:
     user_id: int
+    db_id: ObjectId
     payload: dict
 
 
@@ -73,9 +76,9 @@ class SQSEvent(AppThread):
         self._do_db_mutations = do_db_mutations
         self._remove_queued_messages = remove_queued_messages
 
-    async def create_event(self, telegram_user_id: int, payload: dict):
+    async def create_event(self, telegram_user_id: int, db_record_id: ObjectId, payload: dict):
         log.debug(f'Generating bot event for Telegram user {telegram_user_id}...')
-        await self._application.update_queue.put(TransactionUpdate(user_id=telegram_user_id, payload=payload))
+        await self._application.update_queue.put(TransactionUpdate(user_id=telegram_user_id, db_id=db_record_id, payload=payload))
 
     def unwrap_db_message(self, m: dict) -> Tuple[bool, dict]:
         if 'detail' in m.keys():
@@ -108,8 +111,7 @@ class SQSEvent(AppThread):
                 )
                 if 'Messages' in response.keys():
                     for message in response['Messages']:
-                        m = json.loads(message['Body'])
-                        db_origin, doc = self.unwrap_db_message(m=m)
+                        db_origin, doc = self.unwrap_db_message(m=loads(message['Body']))
                         if doc and 'accountNumber' in doc and 'card' in doc:
                             doc_ref = doc['reference']
                             card_id = int(doc['card']['id'])
@@ -128,11 +130,14 @@ class SQSEvent(AppThread):
                                 log.info(f'Card {card_id} belongs to Telegram user {db.telegram_user_id}.')
                                 # but first, if the message is not of DB origin, then write it to the DB
                                 duplicate_event = False
+                                db_id: ObjectId = None
                                 if not db_origin:
                                     if self._do_db_mutations:
                                         log.info(f'Inserting transaction event {doc_ref} into MongoDB collection...')
                                         try:
-                                            self._mongodb_collection.insert_one(m)
+                                            ir: InsertOneResult = self._mongodb_collection.insert_one(doc)
+                                            db_id = ir.inserted_id
+                                            log.debug(f'Inserted transaction event {doc_ref} into MongDB with ID {db_id!s} (acknowledged? {ir.acknowledged})')
                                         except DuplicateKeyError:
                                             log.warning(f'Discarding duplicate transaction event {doc_ref} dated {date_str}.')
                                             duplicate_event = True
@@ -140,7 +145,7 @@ class SQSEvent(AppThread):
                                         log.warning(f'Not inserting transaction into MongoDB collection due to feature flag or config.')
                                 if not duplicate_event:
                                     log.info(f'Creating notification event for Telegram user {db.telegram_user_id}')
-                                    asyncio.run(self.create_event(telegram_user_id=db.telegram_user_id, payload=doc))
+                                    asyncio.run(self.create_event(telegram_user_id=db.telegram_user_id, db_record_id=db_id, payload=doc))
                             else:
                                 log.warning(f'Ignoring event {doc_ref} for card {card_id} without an associated user.')
                         else:

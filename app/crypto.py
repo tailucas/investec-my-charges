@@ -1,4 +1,4 @@
-from typing import Optional
+from bson.json_util import dumps, loads
 
 from tailucas_pylib import (
     creds,
@@ -9,8 +9,6 @@ from base64 import b64encode, b64decode
 from Crypto.Hash import SHA384
 # https://www.pycryptodome.org/src/cipher/modern#gcm-mode
 from Crypto.Cipher import AES
-
-import simplejson as json
 
 
 def digest(payload: str):
@@ -28,13 +26,13 @@ def encrypt(header: str, payload: str) -> str:
     ciphertext, tag = cipher.encrypt_and_digest(data)
     json_k = [ 'nonce', 'header', 'ciphertext', 'tag' ]
     json_v = [ b64encode(x).decode('utf-8') for x in (cipher.nonce, header, ciphertext, tag) ]
-    return json.dumps(dict(zip(json_k, json_v)))
+    return dumps(dict(zip(json_k, json_v)))
 
 
 def decrypt(header: str, payload: str) -> str:
     if payload is None:
         return None
-    b64 = json.loads(payload)
+    b64 = loads(payload)
     json_k = [ 'nonce', 'header', 'ciphertext', 'tag' ]
     jv = {k:b64decode(b64[k]) for k in json_k}
     key = b64decode(creds.aes_sym_key)

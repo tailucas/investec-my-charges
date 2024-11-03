@@ -2,9 +2,8 @@ import asyncio
 
 from . import APP_NAME
 
-import simplejson as json
-
 from asyncio import AbstractEventLoop
+from bson.json_util import dumps
 from datetime import datetime, timedelta
 from os import path
 from typing import Dict, List, Tuple, Optional, Sequence
@@ -376,9 +375,9 @@ class AppDB:
                     account_id=account_id,
                     account_number=encrypt(header=str(telegram_user_id), payload=account_number),
                     account_number_digest=digest(payload=account_number),
-                    account_info=encrypt(header=str(telegram_user_id), payload=json.dumps(info)))
+                    account_info=encrypt(header=str(telegram_user_id), payload=dumps(info)))
             else:
-                db_account.account_info = encrypt(header=str(telegram_user_id), payload=json.dumps(info))
+                db_account.account_info = encrypt(header=str(telegram_user_id), payload=dumps(info))
             self.db_session.add(db_account)
         await self.db_session.flush()
 
@@ -412,9 +411,9 @@ class AppDB:
                     card_id=card_id,
                     card_number=encrypt(header=str(telegram_user_id), payload=card_number),
                     card_number_digest=digest(payload=card_number),
-                    card_info=encrypt(header=str(telegram_user_id), payload=json.dumps(info)))
+                    card_info=encrypt(header=str(telegram_user_id), payload=dumps(info)))
             else:
-                db_card.card_info = encrypt(header=str(telegram_user_id), payload=json.dumps(info))
+                db_card.card_info = encrypt(header=str(telegram_user_id), payload=dumps(info))
             self.db_session.add(db_card)
         await self.db_session.flush()
 

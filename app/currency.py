@@ -1,5 +1,5 @@
 import requests
-
+from bson.json_util import loads
 from datetime import datetime
 from requests.exceptions import RequestException
 from typing import Dict, Optional, Tuple
@@ -52,7 +52,8 @@ class CurrencyConverter(ZmqWorker):
                     response.raise_for_status()
                 except RequestException as e:
                     raise AssertionError(error_message) from e
-                data = response.json()
+                json_data = response.json()
+                data = loads(json_data)
                 request_success = False
                 if 'success' in data:
                     request_success = data['success']
@@ -70,7 +71,7 @@ class CurrencyConverter(ZmqWorker):
             'int_curr_symbol': self._int_curr_symbol,
             'currency_symbol': self._currency_symbol,
             'rate': rate,
-            'data': data,
+            'data': json_data,
         }
 
 

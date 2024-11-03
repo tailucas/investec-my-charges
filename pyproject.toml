@@ -13,7 +13,6 @@ app = "app.__main__:main"
 python = "^3.11"
 awscli = "^1.27.69"
 sentry-sdk = "^2.10.0"
-simplejson = "^3.18.3"
 emoji = "^2.2.0"
 boto3 = "^1.28.19"
 pymongo = {extras = ["srv"], version = "^4.4.1"}

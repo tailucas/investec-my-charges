@@ -1,15 +1,14 @@
+from bson.json_util import dumps, loads
+from bson.objectid import ObjectId
+
 import emoji
 import html
 import locale
 import random
 import re
-import requests
-import string
-import urllib
 
 import pandas as pd
 import plotly.express as px
-import simplejson as json
 
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
@@ -225,7 +224,7 @@ async def accounts(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                 costs[description] = charge_local_currency
             else:
                 costs[description] += charge_local_currency
-        account_info = json.loads(account.account_info)
+        account_info = loads(account.account_info)
         account_name = account_info['productName']
         account_number = account_info['accountNumber']
         date_string = date.strftime("%d %B %Y")
@@ -262,7 +261,7 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         response_message = rf'{emoji.emojize(":ledger:")} Pick an account:'
         user_keyboard = []
         for account in accounts:
-            info = json.loads(account.account_info)
+            info = loads(account.account_info)
             account_label = info['productName']
             user_keyboard.append([InlineKeyboardButton(account_label, callback_data=f'{ACTION_ACCOUNT_HISTORY}:{account.account_id}')])
         user_keyboard.append(
@@ -370,7 +369,7 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
                         billing_cycle_day: int = db_user_setting.bill_cycle_day_of_month
                         action_interval = billing_cycle_day
             log.debug(f'Telegram user {user.id} card {card.card_id} report: {callback_action=}, {action_interval=}')
-            info = json.loads(card.card_info)
+            info = loads(card.card_info)
             card_label = info['EmbossedName']
             user_keyboard.append([InlineKeyboardButton(card_label, callback_data=f'{callback_action}:{card.card_id}:{action_interval}')])
         user_keyboard.append(
@@ -450,14 +449,14 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         cards: Optional[Sequence[Card]] = await get_cards(telegram_user_id=user.id, user_id=db_user.id)
         if cards:
             for card in cards:
-                info = json.loads(card.card_info)
+                info = loads(card.card_info)
                 account_numbers.append(info['AccountNumber'])
                 card_ids.append(str(card.card_id))
                 card_names.append(str(info['EmbossedName']).title())
     else:
         card: Optional[Card] = await get_card(telegram_user_id=user.id, user_id=db_user.id, card_id=int(card_id))
         if card:
-            info = json.loads(card.card_info)
+            info = loads(card.card_info)
             account_numbers.append(info['AccountNumber'])
             card_ids.append(str(card.card_id))
             card_names.append(str(info['EmbossedName']).title())
@@ -584,7 +583,7 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         parse_mode=ParseMode.MARKDOWN)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
     access_token: Optional[Tuple] = await get_access_token(telegram_user_id=user.id, user_id=db_user.id)
-    creds = json.loads(db_user.investec_credentials)
+    creds = loads(db_user.investec_credentials)
     client = InvestecOpenApiClient(
         client_id=db_user.investec_client_id,
         secret=creds['secret'],
@@ -640,7 +639,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if accounts:
         account_summary = f''
         for account in accounts:
-            info: dict = json.loads(account.account_info)
+            info: dict = loads(account.account_info)
             account_number = info["accountNumber"]
             if app_config.getboolean('app', 'demo_mode'):
                 log.warning(f'Demo mode enabled! Generating fake account number and amount for Telegram user {user.id}.')
@@ -654,7 +653,7 @@ async def show_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     if cards:
         card_summary = f''
         for card in cards:
-            info: dict = json.loads(card.card_info)
+            info: dict = loads(card.card_info)
             card_summary += f'{emoji.emojize(":credit_card:")} {info["EmbossedName"]} ({info["CardNumber"]})\n'
     influxdb.write('bot', 'show_profile', 1)
     if accounts is None and cards is None:
@@ -706,7 +705,7 @@ async def registration(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await add_user(
             telegram_user_id=user.id,
             investec_client_id=investec_client_id,
-            investec_credentials=json.dumps(investec_credentials))
+            investec_credentials=dumps(investec_credentials))
         #influxdb.write('bot', 'registration_oauth', 1)
         await query.edit_message_text(
             text=f'User registration completed.',
@@ -908,7 +907,7 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
     if db_user is None:
         return
     tran_event: dict = update.payload
-    log.debug(f'Transaction details {tran_event!s}.')
+    log.debug(f'Transaction details {tran_event!s} (DB ID: {update.db_id!s}).')
     card_id = tran_event['card']['id']
     # user settings for interval type
     billing_cycle_day: int = app_config.getint('app', 'default_bill_cycle_day_of_month')
@@ -927,7 +926,7 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
     if card is None:
         log.debug(f'No card for Telegram user ID {user.id}.')
         return
-    card_info = json.loads(card.card_info)
+    card_info = loads(card.card_info)
     account_number: str = card_info['AccountNumber']
     card_name: str = str(card_info['EmbossedName']).title()
     merchant_name: str = tran_event['merchant']['name']
@@ -957,6 +956,11 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
         },
         "reference": reference
     }
+    if update.db_id:
+        log.debug(f'Adding MongoDB query filter for {update.db_id!s}.')
+        mongo_query["_id"] = {
+            "$ne": update.db_id
+        }
     projection = {}
     sort = []
     md_collection: Collection = context.application.bot_data['mongodb_card_collection']
@@ -969,9 +973,9 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
     i=1
     for doc in cursor:
         log.debug(f'MongoDB result: {doc!s}')
-        doc_id = str(doc['_id'])
-        if doc_id == str(tran_event['_id']):
-            log.debug(f'Skipping database item {doc_id} already present in notification.')
+        doc_id: ObjectId = doc['_id']
+        if doc_id == update.db_id:
+            log.warning(f'Database item {doc_id} is supposed to already be filtered.')
             continue
         reference: str = doc['reference']
         cents_amount = int(doc['centsAmount'])
