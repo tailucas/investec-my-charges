@@ -125,7 +125,7 @@ class SQSEvent(AppThread):
                             db: User = asyncio.run(get_user_from_card(card_id=card_id))
                             # ensure that the event is on the application queue
                             if db:
-                                log.info(f'Card {card_id} belongs to Telegram user {db.telegram_user_id}')
+                                log.info(f'Card {card_id} belongs to Telegram user {db.telegram_user_id}.')
                                 # but first, if the message is not of DB origin, then write it to the DB
                                 duplicate_event = False
                                 if not db_origin:

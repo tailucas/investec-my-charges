@@ -34,7 +34,6 @@ def encrypt(header: str, payload: str) -> str:
 def decrypt(header: str, payload: str) -> str:
     if payload is None:
         return None
-    log.debug(f'Decrypting {len(payload)} bytes.')
     b64 = json.loads(payload)
     json_k = [ 'nonce', 'header', 'ciphertext', 'tag' ]
     jv = {k:b64decode(b64[k]) for k in json_k}

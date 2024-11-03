@@ -970,7 +970,7 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
     for doc in cursor:
         log.debug(f'MongoDB result: {doc!s}')
         doc_id = str(doc['_id'])
-        if doc_id == tran_event['_id']:
+        if doc_id == str(tran_event['_id']):
             log.debug(f'Skipping database item {doc_id} already present in notification.')
             continue
         reference: str = doc['reference']
@@ -985,6 +985,7 @@ async def transaction_update(update: TransactionUpdate, context: CustomContext) 
         total_charges += charge_cents_local_currency
     # switch to major denomination
     total_charges = total_charges / 100.0
+    log.debug(f'Sending message to Telegram user ID {user.id} about {i} transactions across the reporting interval.')
     await context.bot.send_message(
         chat_id=update.user_id,
         text=f"{user.first_name}, your card <b>{card_name}</b> has <b>{i} charge(s)</b> since {start_date} from <i>{html.unescape(merchant_name)}</i> coming to a total of <b>{locale.currency(total_charges)}</b>.",

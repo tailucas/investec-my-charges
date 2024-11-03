@@ -230,7 +230,7 @@ class AppDB:
         return users
 
     async def get_user(self, telegram_user_id: int) -> Optional[User]:
-        log.debug(f'Fetching user information for Telegram user {telegram_user_id}.')
+        log.debug(f'Fetching user information for Telegram user {telegram_user_id}...')
         db: DbUser = await self._get_db_user(telegram_user_id=telegram_user_id)
         if db is None:
             return None
@@ -255,7 +255,7 @@ class AppDB:
         await self.db_session.flush()
 
     async def get_user_from_card(self, card_id: int) -> Optional[User]:
-        log.debug(f'Fetching user information for card {card_id}.')
+        log.debug(f'Fetching user information for card {card_id}...')
         db: DbUser = await self._get_db_user_from_card(card_id=card_id)
         if db is None:
             return None
@@ -278,7 +278,7 @@ class AppDB:
         await self.db_session.flush()
 
     async def get_user_setting(self, user_id: int) -> Optional[UserSetting]:
-        log.debug(f'Fetching settings for DB user {user_id}')
+        log.debug(f'Fetching settings for DB user {user_id}...')
         db = await self._get_db_user_setting(user_id=user_id)
         if db is None:
             return None
@@ -305,7 +305,7 @@ class AppDB:
         await self.db_session.flush()
 
     async def get_interval_setting(self, user_id: int, account_id: Optional[str]=None, card_id: Optional[int]=None) -> Optional[DbIntervalSetting]:
-        log.debug(f'Fetching interval settings for DB user {user_id}, account {account_id}, card {card_id}')
+        log.debug(f'Fetching interval settings for DB user {user_id}, account {account_id}, card {card_id}...')
         db = await self._get_db_interval_setting(user_id=user_id, account_id=account_id, card_id=card_id)
         if db is None:
             return None
@@ -325,7 +325,7 @@ class AppDB:
             await self.db_session.flush()
 
     async def get_access_token(self, telegram_user_id: int, user_id: int) -> Optional[Tuple[str, datetime]]:
-        log.debug(f'Fetching access token for Telegram user {telegram_user_id} (DB user {user_id}).')
+        log.debug(f'Fetching access token for Telegram user {telegram_user_id} (DB user {user_id})...')
         db = await self._get_db_access_token(user_id=user_id)
         if db is None:
             return None
@@ -348,14 +348,14 @@ class AppDB:
         await self.db_session.flush()
 
     async def get_account(self, telegram_user_id: int, user_id: int, account_id: str) -> Optional[Account]:
-        log.debug(f'Fetching account ID {account_id} for Telegram user {telegram_user_id} (DB user {user_id}).')
+        log.debug(f'Fetching account ID {account_id} for Telegram user {telegram_user_id} (DB user {user_id})...')
         db_account: Optional[DbAccount] = await self._get_db_account(user_id=user_id, account_id=account_id)
         if db_account is None:
             return None
         return Account(telegram_user_id=telegram_user_id, db=db_account)
 
     async def get_accounts(self, telegram_user_id: int, user_id: int) -> Optional[List[Account]]:
-        log.debug(f'Fetching accounts for Telegram user {telegram_user_id} (DB user {user_id}).')
+        log.debug(f'Fetching accounts for Telegram user {telegram_user_id} (DB user {user_id})...')
         db_accounts: Sequence[DbAccount] = await self._get_db_accounts(user_id=user_id)
         if len(db_accounts) == 0:
             return None
@@ -389,7 +389,7 @@ class AppDB:
         return Card(telegram_user_id=telegram_user_id, db=db_card)
 
     async def get_cards(self, telegram_user_id: int, user_id: int) -> Optional[List[Card]]:
-        log.debug(f'Fetching cards for Telegram user {telegram_user_id} (DB user {user_id}).')
+        log.debug(f'Fetching cards for Telegram user {telegram_user_id} (DB user {user_id})...')
         db_cards: Sequence[DbCard] = await self._get_db_cards(user_id=user_id)
         if len(db_cards) == 0:
             return None
