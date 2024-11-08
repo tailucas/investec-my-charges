@@ -359,7 +359,7 @@ async def cards(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             callback_action = ACTION_CARD_REPORT_INTERVAL
             action_interval = DEFAULT_INTERVAL
             report_interval: IntervalSetting = await get_interval_setting(user_id=db_user.id, card_id=card.card_id)
-            log.debug(f'Telegram user {user.id} card {card.card_id} report interval: {report_interval!r}')
+            log.debug(f'Telegram user {user.id} card {card.card_id} report interval: {report_interval.report_interval_days}')
             if report_interval:
                 callback_action = ACTION_CARD_REPORT
                 if report_interval.report_interval_type == REPORT_INTERVAL_TYPE_DATE:
@@ -435,31 +435,31 @@ async def card_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     date = None
     if interval == DEFAULT_INTERVAL:
         date = get_datetime_a_month_ago()
-        await add_interval_setting(user_id=db_user.id, report_interval_type=REPORT_INTERVAL_TYPE_MONTH, report_interval_days=31, card_id=int(card_id))
     else:
         date = get_last_of_day(day=int(interval))
-        await add_interval_setting(user_id=db_user.id, report_interval_type=REPORT_INTERVAL_TYPE_DATE, report_interval_days=int(interval), card_id=int(card_id))
     start_date = date.strftime('%Y-%m-%d')
-    log.debug(f'Telegram user {user.id} selects card ID {card_id} with interval {interval} ({start_date})')
 
+    log.debug(f'Telegram user {user.id} selects card ID {card_id} with interval {interval} ({start_date})')
+    cards: Sequence[Card] = []
     account_numbers = []
     card_ids = []
     card_names = []
     if card_id == DEFAULT_ALL:
-        cards: Optional[Sequence[Card]] = await get_cards(telegram_user_id=user.id, user_id=db_user.id)
-        if cards:
-            for card in cards:
-                info = loads(card.card_info)
-                account_numbers.append(info['AccountNumber'])
-                card_ids.append(str(card.card_id))
-                card_names.append(str(info['EmbossedName']).title())
+        cards = await get_cards(telegram_user_id=user.id, user_id=db_user.id)
     else:
-        card: Optional[Card] = await get_card(telegram_user_id=user.id, user_id=db_user.id, card_id=int(card_id))
-        if card:
-            info = loads(card.card_info)
-            account_numbers.append(info['AccountNumber'])
-            card_ids.append(str(card.card_id))
-            card_names.append(str(info['EmbossedName']).title())
+        cards.append(await get_card(telegram_user_id=user.id, user_id=db_user.id, card_id=int(card_id)))
+
+    card: Card
+    for card in cards:
+        info = loads(card.card_info)
+        account_numbers.append(info['AccountNumber'])
+        card_ids.append(str(card.card_id))
+        card_names.append(str(info['EmbossedName']).title())
+        if interval == DEFAULT_INTERVAL:
+            await add_interval_setting(user_id=db_user.id, report_interval_type=REPORT_INTERVAL_TYPE_MONTH, report_interval_days=31, card_id=int(card.card_id))
+        else:
+            await add_interval_setting(user_id=db_user.id, report_interval_type=REPORT_INTERVAL_TYPE_DATE, report_interval_days=int(interval), card_id=int(card.card_id))
+
     log.debug(f'Running MongoDB query: {account_numbers=}, {card_ids=}')
     # fetch associated transaction data
     reference = {
